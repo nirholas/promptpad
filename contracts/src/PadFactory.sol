@@ -48,7 +48,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;
     uint256 public constant CURVE_SUPPLY = 800_000_000e18;
     uint256 public constant LP_RESERVE = TOTAL_SUPPLY - CURVE_SUPPLY;
-    uint256 public constant VIRTUAL_TOKEN = 1_073_000_000e18;
+    uint256 public constant VIRTUAL_TOKEN = 1_066_000_000e18;
 
     uint24 public constant POOL_FEE = 10_000;
     int24 internal constant TICK_LOWER = -887_200;
@@ -57,6 +57,12 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
     uint256 public constant MAX_LAUNCH_FEE = 0.05 ether;
     uint16 public constant MAX_TRADE_FEE_BPS = 200;
     uint16 public constant MAX_GRADUATION_FEE_BPS = 1_000;
+
+    /// @notice Anti-snipe: buys in the first `SNIPE_WINDOW` seconds after launch pay an extra tax that
+    /// starts at `SNIPE_START_BPS` and falls linearly to zero. The only exempt buy is the creator's
+    /// initial buy inside the launch transaction itself; no wallet is ever whitelisted.
+    uint64 public constant SNIPE_WINDOW = 5;
+    uint16 public constant SNIPE_START_BPS = 9_900;
     uint16 internal constant BPS = 10_000;
 
     /// @notice Launch channels recorded on-chain.
@@ -267,7 +273,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
         emit LaunchOrigin(token, recorded.channel, recorded.ref);
 
         uint256 initialBuy = msg.value - launchFee;
-        if (initialBuy > 0) _buy(token, initialBuy, minTokensOut);
+        if (initialBuy > 0) _buy(token, initialBuy, minTokensOut, true);
     }
 
     // ================================================================ trading
@@ -279,7 +285,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
         returns (uint256 tokensOut)
     {
         if (block.timestamp > deadline) revert Expired();
-        tokensOut = _buy(token, msg.value, minTokensOut);
+        tokensOut = _buy(token, msg.value, minTokensOut, false);
     }
 
     function sell(address token, uint256 tokensIn, uint256 minEthOut, uint256 deadline)
@@ -304,11 +310,15 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
         _sendEth(msg.sender, ethOut);
     }
 
-    function _buy(address token, uint256 grossIn, uint256 minTokensOut) internal returns (uint256 tokensOut) {
+    function _buy(address token, uint256 grossIn, uint256 minTokensOut, bool launchBuy)
+        internal
+        returns (uint256 tokensOut)
+    {
         Curve storage c = _live(token);
         if (grossIn == 0) revert ZeroAmount();
 
-        (uint256 net, uint256 fee, uint256 out, uint256 refund) = _quoteBuy(c, grossIn);
+        uint16 feeBps = launchBuy ? c.tradeFeeBps : _buyFeeBps(c);
+        (uint256 net, uint256 fee, uint256 out, uint256 refund) = _quoteBuy(c, grossIn, feeBps);
         if (out == 0 || out < minTokensOut) revert Slippage();
         tokensOut = out;
 
@@ -564,7 +574,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
         returns (uint256 tokensOut, uint256 fee, uint256 refund)
     {
         Curve storage c = _live(token);
-        (, fee, tokensOut, refund) = _quoteBuy(c, ethIn);
+        (, fee, tokensOut, refund) = _quoteBuy(c, ethIn, _buyFeeBps(c));
     }
 
     function quoteSell(address token, uint256 tokensIn) external view returns (uint256 ethOut, uint256 fee) {
@@ -575,12 +585,23 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
 
     // ================================================================ internals
 
-    function _quoteBuy(Curve storage c, uint256 grossIn)
+    /// @notice Current total buy fee in basis points, including any anti-snipe tax.
+    function buyFeeBps(address token) external view returns (uint16) {
+        return _buyFeeBps(_live(token));
+    }
+
+    function _buyFeeBps(Curve storage c) internal view returns (uint16) {
+        uint256 elapsed = block.timestamp - c.createdAt;
+        if (elapsed >= SNIPE_WINDOW) return c.tradeFeeBps;
+        uint256 snipe = (uint256(SNIPE_START_BPS) * (SNIPE_WINDOW - elapsed)) / SNIPE_WINDOW;
+        return uint16(Math.min(uint256(c.tradeFeeBps) + snipe, SNIPE_START_BPS));
+    }
+
+    function _quoteBuy(Curve storage c, uint256 grossIn, uint16 feeBps)
         internal
         view
         returns (uint256 net, uint256 fee, uint256 out, uint256 refund)
     {
-        uint16 feeBps = c.tradeFeeBps;
         fee = (grossIn * feeBps) / BPS;
         net = grossIn - fee;
 

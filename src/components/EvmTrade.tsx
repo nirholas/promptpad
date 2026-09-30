@@ -172,6 +172,12 @@ export function EvmTrade({ token, symbol, state, onSettled }: { token: string; s
 						<span>this buy completes the curve and graduates the token. {formatNative(Number(formatEther(quote.refund)), 'ETH')} is refunded.</span>
 					</div>
 				) : null}
+				{quote && side === 'buy' && Number(amount) > 0 && Number(formatEther(quote.fee)) / Number(amount) > 0.02 ? (
+					<div className="notice warn" role="status">
+						<span aria-hidden="true">!</span>
+						<span>anti-snipe tax is active. it falls to the normal 1% within 5 seconds of launch; waiting a moment saves most of this fee.</span>
+					</div>
+				) : null}
 				{quoteError ? <div className="notice bad" role="alert"><span aria-hidden="true">!</span><span>{quoteError}</span></div> : null}
 				{result ? (
 					<div className={`notice ${result.ok ? 'good' : 'bad'}`} role="status">

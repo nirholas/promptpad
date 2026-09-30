@@ -38,7 +38,7 @@ contract PadFactoryForkTest is Test {
     ISwapRouter02 constant ROUTER = ISwapRouter02(0xCaf681a66D020601342297493863E78C959E5cb2);
 
     uint256 constant TARGET = 4.2 ether;
-    uint256 constant LAUNCH_FEE = 0.002 ether;
+    uint256 constant LAUNCH_FEE = 0.0005 ether;
 
     PadFactory factory;
     address owner = makeAddr("owner");
@@ -54,7 +54,7 @@ contract PadFactoryForkTest is Test {
         vm.createSelectFork(vm.envString("ROBINHOOD_RPC_URL"));
         (attester, attesterKey) = makeAddrAndKey("attester");
         factory = new PadFactory(
-            owner, treasury, WETH, V3_FACTORY, NPM, TARGET, LAUNCH_FEE, 100, 5_000, 300, attester
+            owner, treasury, WETH, V3_FACTORY, NPM, TARGET, LAUNCH_FEE, 100, 7_000, 0, attester
         );
         vm.deal(creator, 100 ether);
         vm.deal(alice, 100 ether);
@@ -74,6 +74,8 @@ contract PadFactoryForkTest is Test {
             0,
             _direct()
         );
+        // Most tests trade after the anti-snipe window; the snipe tests launch without this helper.
+        vm.warp(block.timestamp + factory.SNIPE_WINDOW());
     }
 
     function _direct() internal pure returns (PadFactory.Origin memory) {
@@ -201,7 +203,7 @@ contract PadFactoryForkTest is Test {
     }
 
     function test_virtualReservesSellOutAtTarget() public view {
-        assertEq(factory.virtualEth(), 1.43325 ether);
+        assertEq(factory.virtualEth(), 1.3965 ether);
     }
 
     function test_createChargesLaunchFeeAndStoresMetadata() public {
@@ -231,8 +233,8 @@ contract PadFactoryForkTest is Test {
         uint256 bal = IERC20(token).balanceOf(creator);
         assertGt(bal, 0);
         assertEq(factory.getCurve(token).ethReserve, 0.099 ether);
-        assertEq(factory.creatorFeesOwed(token), 0.0005 ether);
-        assertEq(factory.protocolFeesOwed(), LAUNCH_FEE + 0.0005 ether);
+        assertEq(factory.creatorFeesOwed(token), 0.0007 ether);
+        assertEq(factory.protocolFeesOwed(), LAUNCH_FEE + 0.0003 ether);
     }
 
     function test_buySellRoundTripLosesOnlyFees() public {
@@ -294,7 +296,8 @@ contract PadFactoryForkTest is Test {
         // Pool price equals the curve's final price (vEth / vTok) within a hair.
         (uint160 sqrtP,,,,,,) = IUniswapV3Pool(c.pool).slot0();
         uint256 priceX192 = uint256(sqrtP) * uint256(sqrtP);
-        uint256 expectedEthPerToken = ((factory.virtualEth() + TARGET) * 1e18) / (273_000_000e18);
+        uint256 expectedEthPerToken =
+            ((factory.virtualEth() + TARGET) * 1e18) / (factory.VIRTUAL_TOKEN() - factory.CURVE_SUPPLY());
         uint256 ethPerToken =
             token < address(WETH) ? (priceX192 * 1e18) >> 192 : (uint256(1e18) << 192) / priceX192;
         assertApproxEqRel(ethPerToken, expectedEthPerToken, 1e14);
@@ -322,7 +325,8 @@ contract PadFactoryForkTest is Test {
 
         (uint160 sqrtP,,,,,,) = IUniswapV3Pool(pool).slot0();
         uint256 priceX192 = uint256(sqrtP) * uint256(sqrtP);
-        uint256 expectedEthPerToken = ((factory.virtualEth() + TARGET) * 1e18) / (273_000_000e18);
+        uint256 expectedEthPerToken =
+            ((factory.virtualEth() + TARGET) * 1e18) / (factory.VIRTUAL_TOKEN() - factory.CURVE_SUPPLY());
         uint256 ethPerToken = tokenIsToken0 ? (priceX192 * 1e18) >> 192 : (uint256(1e18) << 192) / priceX192;
         assertApproxEqRel(ethPerToken, expectedEthPerToken, 1e14);
     }
@@ -338,8 +342,10 @@ contract PadFactoryForkTest is Test {
         assertEq(feeWallet.balance, owed);
 
         uint256 protocol = factory.protocolFeesOwed();
-        // launch fee + half the trade fee + 3% graduation fee on 4.2 ETH at minimum
-        assertGt(protocol, LAUNCH_FEE + 0.126 ether);
+        // launch fee + 30% of the trade fee; no graduation fee, the whole raise goes into the pool
+        uint256 tradeFees = owed * 10_000 / 7_000;
+        // plus a few wei of rounding dust left over from the Uniswap mint
+        assertApproxEqAbs(protocol, LAUNCH_FEE + tradeFees - owed, 1e6);
         factory.withdrawProtocolFees();
         assertEq(treasury.balance, protocol);
 
@@ -354,8 +360,8 @@ contract PadFactoryForkTest is Test {
 
         factory.collectLpFees(token);
         uint256 wethFee = 0.01 ether;
-        assertApproxEqAbs(WETH.balanceOf(feeWallet), wethFee / 2, 2);
-        assertApproxEqAbs(WETH.balanceOf(treasury), wethFee / 2, 2);
+        assertApproxEqAbs(WETH.balanceOf(feeWallet), (wethFee * 70) / 100, 2);
+        assertApproxEqAbs(WETH.balanceOf(treasury), (wethFee * 30) / 100, 2);
         assertEq(c.lpTokenId, factory.getCurve(token).lpTokenId);
     }
 
@@ -383,7 +389,7 @@ contract PadFactoryForkTest is Test {
         vm.prank(owner);
         factory.setConfig(treasury, LAUNCH_FEE, 200, 0, 1_000, false);
         _buy(alice, token, 1 ether);
-        assertEq(factory.creatorFeesOwed(token), 0.005 ether);
+        assertEq(factory.creatorFeesOwed(token), 0.007 ether);
     }
 
     function testFuzz_buyNeverOversells(uint96 a, uint96 b) public {
@@ -397,5 +403,55 @@ contract PadFactoryForkTest is Test {
         if (!c.graduated) {
             assertEq(IERC20(token).balanceOf(address(factory)), 1_000_000_000e18 - c.tokensSold);
         }
+    }
+
+    function _launchNow() internal returns (address token) {
+        vm.prank(creator);
+        token = factory.createToken{value: LAUNCH_FEE}(_params(), 0, _direct());
+    }
+
+    function test_snipeTaxDecaysToBaseOverWindow() public {
+        address token = _launchNow();
+        assertEq(factory.buyFeeBps(token), 9_900, "capped at 99% in the launch second");
+        vm.warp(block.timestamp + 2);
+        assertEq(factory.buyFeeBps(token), 100 + (9_900 * 3) / 5);
+        vm.warp(block.timestamp + 3);
+        assertEq(factory.buyFeeBps(token), 100, "back to the 1% base after 5s");
+    }
+
+    function test_sniperPaysTheTaxAndItIsSplitLikeTheTradeFee() public {
+        address token = _launchNow();
+        uint256 protocolBefore = factory.protocolFeesOwed();
+        uint256 got = _buy(alice, token, 1 ether);
+        // 99% of the ETH is tax; the sniper gets only what 0.01 ETH buys.
+        assertEq(factory.getCurve(token).ethReserve, 0.01 ether);
+        assertEq(factory.creatorFeesOwed(token), 0.693 ether);
+        assertEq(factory.protocolFeesOwed() - protocolBefore, 0.297 ether);
+        assertGt(got, 0);
+    }
+
+    function test_creatorInitialBuyIsTheOnlyExemption() public {
+        vm.prank(creator);
+        address token = factory.createToken{value: LAUNCH_FEE + 1 ether}(_params(), 0, _direct());
+        assertEq(factory.getCurve(token).ethReserve, 0.99 ether, "atomic launch buy pays the 1% base only");
+        // The same creator buying again in the window is taxed like anyone else.
+        uint256 reserveBefore = factory.getCurve(token).ethReserve;
+        vm.prank(creator);
+        factory.buy{value: 1 ether}(token, 0, block.timestamp);
+        assertEq(factory.getCurve(token).ethReserve - reserveBefore, 0.01 ether);
+    }
+
+    function test_zeroGraduationFeePutsTheWholeRaiseInThePool() public {
+        address token = _launch(0);
+        uint256 protocolBefore = factory.protocolFeesOwed();
+        _buy(alice, token, 10 ether);
+        PadFactory.Curve memory c = factory.getCurve(token);
+        assertTrue(c.graduated);
+        // Only the 30% share of the graduating buy's 1% fee reaches the protocol; nothing from the raise.
+        uint256 feeOnFinalBuy = factory.creatorFeesOwed(token) * 10_000 / 7_000;
+        assertApproxEqAbs(
+            factory.protocolFeesOwed() - protocolBefore, feeOnFinalBuy - factory.creatorFeesOwed(token), 1e6
+        );
+        assertEq(IERC20(token).balanceOf(address(factory)), 0);
     }
 }

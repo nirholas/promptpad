@@ -2,15 +2,18 @@
 
 Launch a token from a prompt. Tell Claude (through a remote MCP connector) or fill in a short form, and the token goes live on **Robinhood Chain** or **Solana** on a bonding curve that graduates into locked liquidity. The launcher signs from their own wallet; the fee wallet they name earns the creator share of every trade forever.
 
-Unlike a free, sponsored launcher, every step here carries revenue:
+The economics copy Pons, the leading Robinhood Chain launchpad (about $11.5M of the chain's roughly $12.5M weekly launchpad fees, late September 2026):
 
-| | Robinhood Chain (own contracts) | Solana (Meteora DBC partner config) |
-|---|---|---|
-| Launch fee | 0.002 ETH, flat | 0.04 SOL, flat (Meteora keeps 10%) |
-| Trade fee on the curve | 1%, split 50/50 creator / platform | 1% steady state, opening at 50% and decaying over 60s (anti-snipe); partner share split 50/50 creator / platform after Meteora's 20% cut |
-| Graduation | at 4.2 ETH raised, into a Uniswap v3 1% pool, full range | at 85 SOL raised, into Meteora DAMM v2 |
-| Graduation fee | 3% of the raise | 3% of the migrated quote |
-| After graduation | LP position is held by the factory forever; pool fees split creator / platform | LP permanently locked, 50% creator / 50% platform, each claims its own pool fees |
+| | Pons | Robinhood Chain here | Solana here (Meteora DBC partner config) |
+|---|---|---|---|
+| Launch fee | 0.0005 ETH | 0.0005 ETH | 0.01 SOL (Meteora keeps 10%) |
+| Trade fee | 1% on curve and pool | 1% on curve and pool | 1% on curve and pool |
+| Split | 70% creator / 30% protocol | 70% creator / 30% protocol | 70% creator / 30% platform of the partner share, after Meteora's fixed 20% protocol cut |
+| Graduation | 4.2 ETH, no fee | 4.2 ETH, no fee; the whole raise goes into the pool | 85 SOL, no fee |
+| Liquidity | locked forever | Uniswap v3 position held by the factory forever | DAMM v2 LP permanently locked, 70 / 30 |
+| Anti-snipe | 99% buy tax falling to 0 over ~5s; creator wallets exempt | 99% buy tax falling to 0 over 5s; only the atomic first buy in the launch transaction is exempt | 99% fee decaying to 1% over 5s; the bundled first buy pays the base fee |
+
+One deliberate difference: no wallet is ever exempt from the snipe tax. Pons exempts creator wallets, and one operator used self-exemptions to extract $18.4M across 53 launches (The Block, 2026-09-27). Here the only untaxed buy is the creator's initial buy executed atomically inside the launch transaction, where nobody can front-run it anyway.
 
 All Robinhood Chain values are constructor/owner settings with hard caps in the contract (trade fee at most 2%, launch fee at most 0.05 ETH, graduation fee at most 10%) and are snapshotted per token at launch. All Solana values live in [`src/lib/solana/curve-config.ts`](src/lib/solana/curve-config.ts), which is exactly what the config script writes on-chain.
 

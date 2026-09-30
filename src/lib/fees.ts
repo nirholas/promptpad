@@ -36,8 +36,8 @@ export async function feeSchedule(chain: ChainKey): Promise<FeeSchedule | null> 
 			graduationFeeBps: c.graduationFeeBps,
 			graduationTarget: Number(formatEther(c.targetRaise)),
 			graduatesTo: 'Uniswap v3 (1% pool, full range)',
-			antiSnipe: null,
-			lpTerms: 'Liquidity is held by the factory forever. Pool fees split creator / protocol at the creator share.',
+			antiSnipe: { startBps: c.snipeStartBps, seconds: c.snipeWindow },
+			lpTerms: `Liquidity is held by the factory forever. The pool's 1% fee keeps splitting ${c.creatorShareBps / 100}% creator / ${100 - c.creatorShareBps / 100}% protocol.`,
 			launchesPaused: c.launchesPaused,
 		};
 	}

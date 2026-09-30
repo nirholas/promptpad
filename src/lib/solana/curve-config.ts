@@ -23,20 +23,20 @@ export const SOLANA_ECONOMICS = {
 	migrationQuoteThresholdSol: 85,
 	/** Share of supply that seeds the DAMM v2 pool at migration. */
 	percentageSupplyOnMigration: 20,
-	/** Flat SOL charged to the launcher when the pool is created (Meteora keeps 10%). */
-	launchFeeSol: 0.04,
-	/** Steady-state trade fee once the anti-snipe window has passed. */
+	/** Flat SOL charged to the launcher when the pool is created (Meteora keeps 10%). Pons-level. */
+	launchFeeSol: 0.01,
+	/** Steady-state trade fee once the anti-snipe window has passed: 1%, as on Pons. */
 	tradeFeeBps: 100,
-	/** Opening trade fee; decays exponentially to `tradeFeeBps` over `antiSnipeSeconds`. */
-	antiSnipeStartBps: 5_000,
-	antiSnipeSeconds: 60,
-	/** Share of the partner's trading fee paid to the token's creator. */
-	creatorTradingFeePercentage: 50,
-	/** Share of the migrated quote taken as a migration fee, all to the partner. */
-	migrationFeePercentage: 3,
-	/** Permanently locked LP at migration; each side claims its own LP fees forever. */
-	partnerLockedLpPercentage: 50,
-	creatorLockedLpPercentage: 50,
+	/** Opening trade fee of 99%, decaying to `tradeFeeBps` over `antiSnipeSeconds` (Pons: 5s). */
+	antiSnipeStartBps: 9_900,
+	antiSnipeSeconds: 5,
+	/** Creator share of the partner's trading fee: the Pons 70 / 30 split. */
+	creatorTradingFeePercentage: 70,
+	/** No graduation fee, as on Pons. */
+	migrationFeePercentage: 0,
+	/** Permanently locked LP at migration, 70 / 30 like the trade fee; each side claims its own LP fees. */
+	partnerLockedLpPercentage: 30,
+	creatorLockedLpPercentage: 70,
 	/** Meteora's protocol cut of every trading fee (fixed by the program). */
 	meteoraProtocolFeePercentage: 20,
 } as const;

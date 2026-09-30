@@ -79,7 +79,7 @@ export async function readEvmOrigin(token: Address) {
 
 export async function readFactoryConfig() {
 	const address = factory();
-	const [launchFee, tradeFeeBps, creatorShareBps, graduationFeeBps, targetRaise, launchesPaused, tokenCount] =
+	const [launchFee, tradeFeeBps, creatorShareBps, graduationFeeBps, targetRaise, launchesPaused, tokenCount, snipeStartBps, snipeWindow] =
 		await Promise.all([
 			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'launchFee' }),
 			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'tradeFeeBps' }),
@@ -88,8 +88,20 @@ export async function readFactoryConfig() {
 			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'targetRaise' }),
 			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'launchesPaused' }),
 			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'tokenCount' }),
+			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'SNIPE_START_BPS' }),
+			evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'SNIPE_WINDOW' }),
 		]);
-	return { launchFee, tradeFeeBps, creatorShareBps, graduationFeeBps, targetRaise, launchesPaused, tokenCount };
+	return {
+		launchFee,
+		tradeFeeBps,
+		creatorShareBps,
+		graduationFeeBps,
+		targetRaise,
+		launchesPaused,
+		tokenCount,
+		snipeStartBps,
+		snipeWindow: Number(snipeWindow),
+	};
 }
 
 export async function readFactoryTokens(from: number, to: number): Promise<Address[]> {

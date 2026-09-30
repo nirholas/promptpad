@@ -23,10 +23,10 @@ contract Deploy is Script {
         address owner = vm.envAddress("PAD_OWNER");
         address treasury = vm.envAddress("PAD_TREASURY");
         uint256 targetRaise = vm.envOr("PAD_TARGET_RAISE_WEI", uint256(4.2 ether));
-        uint256 launchFee = vm.envOr("PAD_LAUNCH_FEE_WEI", uint256(0.002 ether));
+        uint256 launchFee = vm.envOr("PAD_LAUNCH_FEE_WEI", uint256(0.0005 ether));
         uint16 tradeFeeBps = uint16(vm.envOr("PAD_TRADE_FEE_BPS", uint256(100)));
-        uint16 creatorShareBps = uint16(vm.envOr("PAD_CREATOR_SHARE_BPS", uint256(5_000)));
-        uint16 graduationFeeBps = uint16(vm.envOr("PAD_GRADUATION_FEE_BPS", uint256(300)));
+        uint16 creatorShareBps = uint16(vm.envOr("PAD_CREATOR_SHARE_BPS", uint256(7_000)));
+        uint16 graduationFeeBps = uint16(vm.envOr("PAD_GRADUATION_FEE_BPS", uint256(0)));
         address launchAttester = vm.envOr("PAD_ATTESTER", address(0));
 
         vm.startBroadcast();

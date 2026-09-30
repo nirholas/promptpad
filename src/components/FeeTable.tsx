@@ -14,7 +14,7 @@ function rows(f: FeeSchedule) {
 		],
 		['creator share', `${formatBps(f.creatorShareBps)} of trade fees, to the fee wallet forever`],
 		['graduation', `at ${f.graduationTarget} ${n} raised, into ${f.graduatesTo}`],
-		['graduation fee', `${formatBps(f.graduationFeeBps)} of the raise`],
+		['graduation fee', f.graduationFeeBps ? `${formatBps(f.graduationFeeBps)} of the raise` : 'none; the whole raise goes into the pool'],
 		['liquidity', f.lpTerms],
 	] as const;
 }
