@@ -280,7 +280,7 @@ export function LaunchFlow({
 			>
 				<div>
 					<span className="eyebrow">{checkout ? (draft?.source === 'claude' ? 'prepared in claude' : 'your launch') : 'new launch'}</span>
-					<h1 style={{ fontSize: 'clamp(30px, 5vw, 44px)', marginTop: 8 }}>{checkout ? 'review and sign' : 'launch a token'}</h1>
+					<h1 style={{ fontSize: 'clamp(30px, 5vw, 44px)', marginTop: 8 }}>{checkout ? 'Review and sign' : 'Launch a token'}</h1>
 				</div>
 
 				<div className="field">
@@ -421,8 +421,10 @@ export function LaunchFlow({
 							<dd>{Number(form.initialBuy || 0)} {native}</dd>
 							<dt>network gas</dt>
 							<dd>set by your wallet</dd>
-							<dt>trade fee after launch</dt>
-							<dd>{formatBps(schedule.tradeFeeBps)}, {formatBps(schedule.creatorShareBps)} of it to you</dd>
+							<dt>trade fee</dt>
+							<dd>{formatBps(schedule.tradeFeeBps)}</dd>
+							<dt>you earn</dt>
+							<dd>{formatBps((schedule.tradeFeeBps * schedule.creatorShareBps) / 10_000)} of every trade</dd>
 							<dt>graduates at</dt>
 							<dd>{schedule.graduationTarget} {native} raised</dd>
 						</dl>

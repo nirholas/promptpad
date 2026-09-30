@@ -100,7 +100,7 @@ export function EvmTrade({ token, symbol, state, onSettled }: { token: string; s
 	if (state.graduated) {
 		return (
 			<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-				<h2 style={{ fontSize: 20 }}>trade</h2>
+				<h2 className="caps">trade</h2>
 				<p className="muted">
 					${symbol} graduated. it now trades in its Uniswap v3 pool (1% fee tier, paired with WETH) on {robinhoodChain.name}, where the liquidity is locked forever.
 				</p>
@@ -239,7 +239,7 @@ export function EvmCreatorFees({ token, state, onSettled }: { token: string; sta
 
 	return (
 		<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-			<h2 style={{ fontSize: 20 }}>creator fees</h2>
+			<h2 className="caps">creator fees</h2>
 			<dl className="kv">
 				<dt>waiting on the curve</dt>
 				<dd>{formatNative(state.creatorFeesClaimableNative, 'ETH')}</dd>

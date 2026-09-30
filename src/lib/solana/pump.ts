@@ -358,18 +358,48 @@ export async function readPumpTokenState(mint: string): Promise<TokenState | nul
 	};
 }
 
+/** Live prices of graduated coins from their PumpSwap pools (DexScreener, up to 30 per call). */
+async function graduatedPrices(mints: string[]): Promise<Map<string, number>> {
+	const prices = new Map<string, number>();
+	for (let i = 0; i < mints.length; i += 30) {
+		try {
+			const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.slice(i, i + 30).join(',')}`, {
+				signal: AbortSignal.timeout(5_000),
+			});
+			const pairs = (await res.json()) as { baseToken?: { address?: string }; priceNative?: string; liquidity?: { usd?: number } }[];
+			const best = new Map<string, { price: number; liquidity: number }>();
+			for (const p of pairs) {
+				const mint = p.baseToken?.address;
+				if (!mint || !p.priceNative) continue;
+				const liquidity = p.liquidity?.usd ?? 0;
+				if ((best.get(mint)?.liquidity ?? -1) < liquidity) best.set(mint, { price: Number(p.priceNative), liquidity });
+			}
+			for (const [mint, v] of best) prices.set(mint, v.price);
+		} catch {
+			// Missing prices fall back to the curve's final price.
+		}
+	}
+	return prices;
+}
+
 export async function pumpProgressMany(mints: string[]) {
 	const { global } = await protocol();
 	const initialReal = Number(global.initialRealTokenReserves.toString());
 	const infos = await connection.getMultipleAccountsInfo(mints.map((m) => bondingCurvePda(new PublicKey(m))));
+	const curves = infos.map((info) => (info ? PUMP_SDK.decodeBondingCurve(info) : null));
+	const live = await graduatedPrices(mints.filter((_, i) => curves[i]?.complete));
 	return mints.map((mint, i) => {
-		const info = infos[i];
-		if (!info) return { address: mint, progress: null, graduated: false };
-		const curve = PUMP_SDK.decodeBondingCurve(info);
+		const curve = curves[i];
+		if (!curve) return { address: mint, progress: null, graduated: false, priceNative: null, marketCapNative: null };
+		const supply = Number(curve.tokenTotalSupply.toString()) / 1e6;
+		const curvePrice = Number(curve.virtualQuoteReserves.toString()) / 1e9 / (Number(curve.virtualTokenReserves.toString()) / 1e6);
+		const price = curve.complete ? (live.get(mint) ?? curvePrice) : curvePrice;
 		return {
 			address: mint,
 			graduated: curve.complete,
 			progress: curve.complete ? 1 : Math.min(1, Math.max(0, 1 - Number(curve.realTokenReserves.toString()) / initialReal)),
+			priceNative: price,
+			marketCapNative: price * supply,
 		};
 	});
 }

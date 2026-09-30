@@ -147,7 +147,7 @@ export function SolanaTrade({ mint, symbol, state, onSettled }: { mint: string; 
 	if (state.graduated) {
 		return (
 			<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-				<h2 style={{ fontSize: 20 }}>trade</h2>
+				<h2 className="caps">trade</h2>
 				<p className="muted">${symbol} completed its curve and now trades on PumpSwap. every Solana terminal and aggregator routes to it.</p>
 				<a className="btn" href={`https://pump.fun/coin/${mint}`} target="_blank" rel="noreferrer">
 					trade on pump.fun
@@ -255,7 +255,7 @@ export function SolanaCreatorFees({ mint, state, onSettled }: { mint: string; st
 
 	return (
 		<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-			<h2 style={{ fontSize: 20 }}>creator fees</h2>
+			<h2 className="caps">creator fees</h2>
 			<dl className="kv">
 				<dt>waiting for the fee wallet</dt>
 				<dd>{formatNative(state.creatorFeesClaimableNative, 'SOL')}</dd>

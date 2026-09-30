@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import type { ChainKey } from '@/lib/config';
-import { formatPercent } from '@/lib/format';
+import { nativeSymbol, type ChainKey } from '@/lib/config';
+import { formatNative, formatPercent } from '@/lib/format';
 
-type Progress = { progress: number | null; graduated: boolean };
-type Pending = { resolve: (p: Progress) => void; reject: (e: Error) => void };
+export type Metrics = { progress: number | null; graduated: boolean; priceNative: number | null; marketCapNative: number | null };
+type Pending = { resolve: (m: Metrics) => void; reject: (e: Error) => void };
 
-// Cards that scroll into view within the same tick share one request per chain.
+// Cards that scroll into view in the same tick share one request per chain.
 const queues: Record<ChainKey, Map<string, Pending[]>> = { robinhood: new Map(), solana: new Map() };
 const timers: Partial<Record<ChainKey, ReturnType<typeof setTimeout>>> = {};
 
@@ -16,15 +16,14 @@ function flush(chain: ChainKey) {
 	const batch = queues[chain];
 	queues[chain] = new Map();
 	delete timers[chain];
-	const addresses = [...batch.keys()];
-	fetch(`/api/progress?chain=${chain}&a=${addresses.join(',')}`)
+	fetch(`/api/progress?chain=${chain}&a=${[...batch.keys()].join(',')}`)
 		.then(async (r) => {
-			const body = (await r.json()) as { progress?: (Progress & { address: string })[]; error?: string };
-			if (!r.ok || !body.progress) throw new Error(body.error || 'Progress unavailable.');
+			const body = (await r.json()) as { progress?: (Metrics & { address: string })[]; error?: string };
+			if (!r.ok || !body.progress) throw new Error(body.error || 'Metrics unavailable.');
 			const byAddress = new Map(body.progress.map((p) => [p.address.toLowerCase(), p]));
 			for (const [address, waiters] of batch) {
-				const p = byAddress.get(address.toLowerCase()) ?? { progress: null, graduated: false };
-				waiters.forEach((w) => w.resolve(p));
+				const m = byAddress.get(address.toLowerCase()) ?? { progress: null, graduated: false, priceNative: null, marketCapNative: null };
+				waiters.forEach((w) => w.resolve(m));
 			}
 		})
 		.catch((error: Error) => {
@@ -32,8 +31,8 @@ function flush(chain: ChainKey) {
 		});
 }
 
-function requestProgress(chain: ChainKey, address: string) {
-	return new Promise<Progress>((resolve, reject) => {
+function request(chain: ChainKey, address: string) {
+	return new Promise<Metrics>((resolve, reject) => {
 		const list = queues[chain].get(address) ?? [];
 		list.push({ resolve, reject });
 		queues[chain].set(address, list);
@@ -46,30 +45,20 @@ function requestProgress(chain: ChainKey, address: string) {
 	});
 }
 
-/** Live curve progress, fetched once the card scrolls into view. */
-export function CurveProgress({
-	chain,
-	address,
-	graduated,
-}: {
-	chain: ChainKey;
-	address: string;
-	graduated: boolean;
-}) {
-	const ref = useRef<HTMLDivElement>(null);
-	const [state, setState] = useState<Progress | null>(null);
+/** Live card metrics, fetched once the element scrolls into view. */
+function useMetrics(chain: ChainKey, address: string) {
+	const ref = useRef<HTMLDivElement & HTMLTableRowElement>(null);
+	const [metrics, setMetrics] = useState<Metrics | null>(null);
 	const [failed, setFailed] = useState(false);
-
 	useEffect(() => {
-		if (graduated) return;
 		const el = ref.current;
 		if (!el) return;
 		let cancelled = false;
 		const observer = new IntersectionObserver((entries) => {
 			if (!entries.some((e) => e.isIntersecting)) return;
 			observer.disconnect();
-			requestProgress(chain, address)
-				.then((p) => !cancelled && setState(p))
+			request(chain, address)
+				.then((m) => !cancelled && setMetrics(m))
 				.catch(() => !cancelled && setFailed(true));
 		});
 		observer.observe(el);
@@ -77,34 +66,65 @@ export function CurveProgress({
 			cancelled = true;
 			observer.disconnect();
 		};
-	}, [chain, address, graduated]);
+	}, [chain, address]);
+	return { ref, metrics, failed };
+}
 
-	const done = graduated || state?.graduated;
-	const progress = done ? 1 : (state?.progress ?? 0);
-	const known = done || (state && state.progress !== null);
+function Value({ value, failed }: { value: string | null; failed: boolean }) {
+	if (value !== null) return <strong>{value}</strong>;
+	if (failed) return <strong className="muted">unavailable</strong>;
+	return <span className="skeleton" style={{ width: 96, height: 18 }} />;
+}
+
+/** The price / market cap / curve block of a token card. */
+export function CardMetrics({ chain, address, graduated }: { chain: ChainKey; address: string; graduated: boolean }) {
+	const { ref, metrics, failed } = useMetrics(chain, address);
+	const native = nativeSymbol(chain);
+	const done = graduated || metrics?.graduated;
+	const progress = done ? 1 : (metrics?.progress ?? null);
 	return (
-		<div ref={ref}>
-			<div
-				className={`progress ${done ? 'done' : ''}`}
-				role="progressbar"
-				aria-valuemin={0}
-				aria-valuemax={100}
-				aria-valuenow={Math.round(progress * 100)}
-				aria-label="Bonding curve progress"
-			>
-				<span style={{ width: `${known ? Math.max(progress * 100, 1.5) : 0}%` }} />
+		<div ref={ref} style={{ display: 'grid', gap: 18 }}>
+			<div className="metrics">
+				<div>
+					<span className="caps">price</span>
+					<Value value={metrics?.priceNative != null ? formatNative(metrics.priceNative, native) : null} failed={failed} />
+				</div>
+				<div>
+					<span className="caps">market cap</span>
+					<Value value={metrics?.marketCapNative != null ? formatNative(metrics.marketCapNative, native) : null} failed={failed} />
+				</div>
 			</div>
-			<div className="progress-label">
-				{done ? (
-					<span>graduated</span>
-				) : known ? (
-					<span>{formatPercent(progress)} to graduation</span>
-				) : failed || state ? (
-					<span>progress unavailable</span>
-				) : (
-					<span className="skeleton" style={{ width: 110, height: 12 }} />
-				)}
+			<div>
+				<div
+					className="progress"
+					role="progressbar"
+					aria-valuemin={0}
+					aria-valuemax={100}
+					aria-valuenow={progress !== null ? Math.round(progress * 100) : undefined}
+					aria-label="Bonding curve progress"
+				>
+					<span style={{ width: `${progress !== null ? Math.max(progress * 100, 1) : 0}%` }} />
+				</div>
+				<div className="progress-label">
+					<span>{done ? 'graduated' : progress !== null ? `${formatPercent(progress)} to graduation` : failed ? 'curve unavailable' : 'reading curve'}</span>
+				</div>
 			</div>
 		</div>
+	);
+}
+
+/** Table cells for the list view; the row element itself observes visibility. */
+export function RowMetrics({ chain, address, graduated, children }: { chain: ChainKey; address: string; graduated: boolean; children: React.ReactNode }) {
+	const { ref, metrics, failed } = useMetrics(chain, address);
+	const native = nativeSymbol(chain);
+	const done = graduated || metrics?.graduated;
+	const cell = (v: string | null) => (v !== null ? v : failed ? 'unavailable' : <span className="skeleton" style={{ width: 72, height: 14 }} />);
+	return (
+		<tr ref={ref}>
+			{children}
+			<td>{cell(metrics?.priceNative != null ? formatNative(metrics.priceNative, native) : null)}</td>
+			<td>{cell(metrics?.marketCapNative != null ? formatNative(metrics.marketCapNative, native) : null)}</td>
+			<td>{done ? 'graduated' : cell(metrics?.progress != null ? formatPercent(metrics.progress) : null)}</td>
+		</tr>
 	);
 }

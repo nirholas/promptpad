@@ -1,42 +1,57 @@
 import Link from 'next/link';
 
-import { formatDate, registryNumber } from '@/lib/format';
+import { formatAge, registryNumber } from '@/lib/format';
 import type { Launch } from '@/lib/types';
-import { ChainBadge } from './ChainBadge';
-import { CurveProgress } from './CurveProgress';
+import { ChainIcon } from './ChainBadge';
+import { CopyButton } from './CopyButton';
+import { CardMetrics } from './CurveProgress';
 import { OriginChip } from './OriginChip';
 
-export function TokenLogo({ src, alt, size }: { src: string; alt: string; size?: 'lg' }) {
+export function TokenLogo({ src, alt, size, symbol }: { src: string; alt: string; size?: 'lg'; symbol?: string }) {
 	return src ? (
 		// Logos are arbitrary third-party hosts chosen by creators, so they bypass the image optimizer.
 		// eslint-disable-next-line @next/next/no-img-element
 		<img src={src} alt={alt} className={`token-logo ${size ?? ''}`} loading="lazy" referrerPolicy="no-referrer" />
 	) : (
-		<div className={`token-logo ${size ?? ''}`} aria-hidden="true" />
+		<div className={`token-logo fallback ${size ?? ''}`} aria-hidden="true">
+			{symbol?.slice(0, 2) ?? ''}
+		</div>
 	);
 }
 
 export function TokenCard({ launch }: { launch: Launch }) {
+	const href = `/t/${launch.chain}/${launch.address}`;
 	return (
-		<Link href={`/t/${launch.chain}/${launch.address}`} className="card token-card">
-			<div className="token-card-top">
-				<TokenLogo src={launch.image} alt={`${launch.name} logo`} />
+		<article className="card tcard">
+			<div className="tcard-head">
+				<TokenLogo src={launch.image} alt="" symbol={launch.symbol} />
 				<div style={{ minWidth: 0 }}>
-					<div className="token-name">{launch.name}</div>
-					<div className="token-sym">${launch.symbol}</div>
+					<div className="tcard-title">
+						<Link href={href}>{launch.name}</Link>
+						<CopyButton value={launch.address} label="copy address" className="copy-mini" icon />
+					</div>
+					<div className="tcard-sub">
+						<span className="chip">${launch.symbol}</span>
+						<span className="chip" title={launch.chain === 'robinhood' ? 'Robinhood Chain' : 'Solana'}>
+							<span className="chain-badge" style={{ color: 'inherit', fontSize: 'inherit' }}>
+								<ChainIcon chain={launch.chain} />
+								{launch.chain === 'robinhood' ? 'robinhood' : 'solana'}
+							</span>
+						</span>
+						<OriginChip launch={launch} />
+					</div>
 				</div>
-				<div className="token-no">
-					{registryNumber(launch.number)}
-					<br />
-					{formatDate(launch.createdAt)}
-				</div>
+				<span className="tcard-age" title={new Date(launch.createdAt).toUTCString()}>
+					{formatAge(launch.createdAt)}
+				</span>
 			</div>
-			<p className="token-desc">{launch.description || 'no description.'}</p>
-			<CurveProgress chain={launch.chain} address={launch.address} graduated={launch.graduated} />
-			<div className="token-foot">
-				<ChainBadge chain={launch.chain} />
-				<OriginChip launch={launch} />
+			<CardMetrics chain={launch.chain} address={launch.address} graduated={launch.graduated} />
+			<div className="tcard-foot">
+				<span>{registryNumber(launch.number)}</span>
+				<Link href={href} className="link-arrow" style={{ position: 'relative' }}>
+					Trade
+				</Link>
 			</div>
-		</Link>
+		</article>
 	);
 }

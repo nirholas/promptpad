@@ -313,8 +313,21 @@ export async function recordSolanaLaunch(draftId: string, signature: string | nu
 
 // ---------------------------------------------------------------- reading
 
+const ORDER = {
+	newest: 'number desc',
+	oldest: 'number asc',
+	graduated: 'graduated desc, number desc',
+} as const;
+
 export async function listLaunches(
-	opts: { chain?: ChainKey; limit?: number; offset?: number; q?: string; origin?: 'prompt' | 'site' | 'direct' } = {},
+	opts: {
+		chain?: ChainKey;
+		limit?: number;
+		offset?: number;
+		q?: string;
+		origin?: 'prompt' | 'site' | 'direct';
+		sort?: 'newest' | 'oldest' | 'graduated';
+	} = {},
 ) {
 	const limit = Math.min(Math.max(opts.limit ?? 24, 1), 100);
 	const offset = Math.max(opts.offset ?? 0, 0);
@@ -333,7 +346,7 @@ export async function listLaunches(
 	}
 	const clause = where.length ? `where ${where.join(' and ')}` : '';
 	const [rows, count] = await Promise.all([
-		sql<LaunchRow>(`select * from launches ${clause} order by number desc limit ${limit} offset ${offset}`, params),
+		sql<LaunchRow>(`select * from launches ${clause} order by ${ORDER[opts.sort ?? 'newest']} limit ${limit} offset ${offset}`, params),
 		sql<{ n: string | number }>(`select count(*) as n from launches ${clause}`, params),
 	]);
 	return { launches: rows.map(toLaunch), total: Number(count[0]?.n ?? 0) };

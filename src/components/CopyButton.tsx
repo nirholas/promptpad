@@ -2,7 +2,20 @@
 
 import { useState } from 'react';
 
-export function CopyButton({ value, label = 'copy', className = 'btn btn-sm' }: { value: string; label?: string; className?: string }) {
+import { CheckIcon, CopyIcon } from './HeaderControls';
+
+/** Copy-to-clipboard button. `icon` renders a bare glyph (with `label` as its accessible name). */
+export function CopyButton({
+	value,
+	label = 'copy',
+	className = 'btn btn-sm',
+	icon = false,
+}: {
+	value: string;
+	label?: string;
+	className?: string;
+	icon?: boolean;
+}) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<button
@@ -18,8 +31,9 @@ export function CopyButton({ value, label = 'copy', className = 'btn btn-sm' }: 
 				}
 			}}
 			aria-live="polite"
+			aria-label={icon ? label : undefined}
 		>
-			{copied ? 'copied' : label}
+			{icon ? copied ? <CheckIcon /> : <CopyIcon /> : copied ? 'copied' : label}
 		</button>
 	);
 }

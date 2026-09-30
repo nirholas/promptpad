@@ -123,12 +123,12 @@ export function TokenDashboard({
 				</div>
 
 				<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-					<h2 style={{ fontSize: 20 }}>about</h2>
+					<h2 className="caps">about</h2>
 					<p style={{ color: 'var(--ink-2)', whiteSpace: 'pre-wrap' }}>{description || 'the creator did not add a description.'}</p>
 				</div>
 
 				<div className="card card-pad">
-					<h2 style={{ fontSize: 20, marginBottom: 6 }}>on-chain</h2>
+					<h2 className="caps" style={{ marginBottom: 6 }}>on-chain</h2>
 					<AddressRow chain={chain} label="token" value={address} kind="token" />
 					<AddressRow chain={chain} label="fee wallet" value={state.feeWallet} kind="address" />
 					{state.creator !== state.feeWallet ? <AddressRow chain={chain} label="launched by" value={state.creator} kind="address" /> : null}

@@ -166,24 +166,44 @@ async function poolPrice(pool: Address, token: Address) {
 	return token.toLowerCase() < ROBINHOOD_WETH.toLowerCase() ? ratio : 1 / ratio;
 }
 
-/** Curve progress for many tokens; viem batches the reads into multicalls. */
-export async function evmProgressMany(tokens: Address[]) {
+export type CardMetrics = {
+	address: string;
+	progress: number | null;
+	graduated: boolean;
+	priceNative: number | null;
+	marketCapNative: number | null;
+};
+
+/** Progress, price and market cap for many tokens; viem batches the reads into multicalls. */
+export async function evmProgressMany(tokens: Address[]): Promise<CardMetrics[]> {
 	const address = factory();
-	const curves = await Promise.all(
-		tokens.map((token) =>
-			evmClient
-				.readContract({ address, abi: padFactoryAbi, functionName: 'getCurve', args: [token] })
-				.catch(() => null),
+	const [curves, curveSupply, virtualEth, virtualToken, targetRaise] = await Promise.all([
+		Promise.all(
+			tokens.map((token) =>
+				evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'getCurve', args: [token] }).catch(() => null),
+			),
 		),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'CURVE_SUPPLY' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'virtualEth' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'VIRTUAL_TOKEN' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'targetRaise' }),
+	]);
+	return Promise.all(
+		tokens.map(async (token, i) => {
+			const curve = curves[i];
+			if (!curve || curve.createdAt === BigInt(0)) {
+				return { address: token as string, progress: null, graduated: false, priceNative: null, marketCapNative: null };
+			}
+			const reserve = curve.graduated ? targetRaise : curve.ethReserve;
+			const curvePrice = Number(virtualEth + reserve) / Number(virtualToken - curve.tokensSold);
+			const price = curve.graduated ? await poolPrice(curve.pool, token).catch(() => curvePrice) : curvePrice;
+			return {
+				address: token as string,
+				graduated: curve.graduated,
+				progress: curve.graduated ? 1 : Number((curve.tokensSold * BigInt(10_000)) / curveSupply) / 10_000,
+				priceNative: price,
+				marketCapNative: price * 1_000_000_000,
+			};
+		}),
 	);
-	const curveSupply = await evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'CURVE_SUPPLY' });
-	return tokens.map((token, i) => {
-		const curve = curves[i];
-		if (!curve || curve.createdAt === BigInt(0)) return { address: token as string, progress: null, graduated: false };
-		return {
-			address: token as string,
-			graduated: curve.graduated,
-			progress: curve.graduated ? 1 : Number((curve.tokensSold * BigInt(10_000)) / curveSupply) / 10_000,
-		};
-	});
 }
