@@ -73,6 +73,19 @@ export async function readLaunchFromTx(hash: Hash): Promise<EvmLaunchEvent | nul
 	return created ? { ...created, channel } : null;
 }
 
+/** Who controls the factory and where its revenue goes, read live so published docs never go stale. */
+export async function readFactoryAddresses() {
+	const address = factory();
+	const [owner, pendingOwner, treasury, attester] = await Promise.all([
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'owner' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'pendingOwner' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'treasury' }),
+		evmClient.readContract({ address, abi: padFactoryAbi, functionName: 'attester' }),
+	]);
+	const none = (a: Address) => (/^0x0{40}$/i.test(a) ? null : a);
+	return { factory: address, owner, pendingOwner: none(pendingOwner), treasury, attester: none(attester) };
+}
+
 /** The attested channel the factory recorded for a token (0 when launched directly). */
 export async function readEvmOrigin(token: Address) {
 	const [channel, ref] = await evmClient.readContract({

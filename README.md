@@ -99,17 +99,42 @@ PUMP_SIM_PAYER=<funded address> npm test   # builds and simulates the real pump.
 npm run typecheck && npm run lint
 ```
 
-## Going live
+## Deployments
+
+### Robinhood Chain mainnet (chain 4663)
+
+Deployed 2026-09-30 from [`contracts/script/Deploy.s.sol`](contracts/script/Deploy.s.sol). Every value below was read back from the contract after the deploy; the site's [guide](https://promptpad.fun/guide#contracts) shows the same addresses live from the chain.
+
+| | |
+|---|---|
+| PadFactory | [`0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6`](https://robinhoodchain.blockscout.com/address/0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6) |
+| Deploy transaction | [`0x15da0fdb…29df8`](https://robinhoodchain.blockscout.com/tx/0x15da0fdb1d459a06a1f57386ce00eb8ae585db6f60fa3c4e7b34106ac8a29df8), block 76349359, 0.000575 ETH gas |
+| Owner | [`0xc0dE5dBCB4316477AA66E3723Fb6E8EDfe4FB0B0`](https://robinhoodchain.blockscout.com/address/0xc0dE5dBCB4316477AA66E3723Fb6E8EDfe4FB0B0) (also the deployer) |
+| Treasury | [`0xc0dEc2b113E235856eC26AFe33B34Fd07F90D997`](https://robinhoodchain.blockscout.com/address/0xc0dEc2b113E235856eC26AFe33B34Fd07F90D997) |
+| Launch attester | `0x98e8601aC8799df6bd1029eaD21594850fA9b650` (key held as the `ATTESTER_PRIVATE_KEY` Worker secret) |
+| Launch fee | 0.0005 ETH |
+| Trade fee | 1%, of which 70% goes to the creator's fee wallet and 30% to the treasury |
+| Graduation | at 4.2 ETH raised, no graduation fee, into a 1% Uniswap v3 WETH pool held by the factory forever |
+| Anti-snipe | 99% buy tax falling to 0 over the first 5 seconds; only the creator's atomic launch buy is exempt |
+| Uniswap v3 | factory `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA`, position manager `0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3`, WETH `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+
+The site at promptpad.fun is built with `NEXT_PUBLIC_PAD_FACTORY` set to this address.
+
+### Solana
+
+Closed until `NEXT_PUBLIC_SOLANA_TREASURY` is set and the site is rebuilt. No on-chain deploy is needed; the Solana attester (`ATTESTER_SOLANA_SECRET`) is already a Worker secret.
+
+## Deploying your own
 
 These steps spend real funds and are run by the owner.
 
-1. **Robinhood Chain factory.** Deploy it (about 4.8M gas):
+1. **Robinhood Chain factory.** Deploy it (4.9M gas, which cost 0.000575 ETH on mainnet):
    ```bash
    cd contracts
    PAD_OWNER=<owner multisig> PAD_TREASURY=<treasury> \
      forge script script/Deploy.s.sol --rpc-url https://rpc.mainnet.chain.robinhood.com --account <keystore> --broadcast
    ```
-   Set `NEXT_PUBLIC_PAD_FACTORY` to the printed address. To override defaults, set `PAD_LAUNCH_FEE_WEI`, `PAD_TRADE_FEE_BPS`, `PAD_CREATOR_SHARE_BPS`, `PAD_GRADUATION_FEE_BPS` and `PAD_TARGET_RAISE_WEI`.
+   Add `PAD_ATTESTER=<address of ATTESTER_PRIVATE_KEY>` so prompt launches are attested from the first one. Run it once without `--broadcast` first: forge simulates against mainnet and prints the contract address and the gas it will need. Set `NEXT_PUBLIC_PAD_FACTORY` to the printed address. To override defaults, set `PAD_LAUNCH_FEE_WEI`, `PAD_TRADE_FEE_BPS`, `PAD_CREATOR_SHARE_BPS`, `PAD_GRADUATION_FEE_BPS` and `PAD_TARGET_RAISE_WEI`.
 2. **Solana.** No on-chain setup. Set `NEXT_PUBLIC_SOLANA_TREASURY` to the wallet that should receive the launch fee and the platform's 30% of creator fees (and optionally `NEXT_PUBLIC_SOLANA_LAUNCH_FEE_SOL`, default 0.01).
 3. **Attester keys.** Generate one EVM key and one Solana key. Keep them as secrets (`ATTESTER_PRIVATE_KEY`, `ATTESTER_SOLANA_SECRET`), and pass the EVM address as `PAD_ATTESTER` when deploying the factory (or call `setAttester` later).
 4. **Hosting on Cloudflare Workers** (via OpenNext; the bundle is about 5.4 MB gzipped, so it needs the Workers Paid plan):
@@ -121,17 +146,42 @@ These steps spend real funds and are run by the owner.
    NEXT_PUBLIC_SITE_URL=https://<domain> NEXT_PUBLIC_PAD_FACTORY=... NEXT_PUBLIC_SOLANA_TREASURY=... \
      NEXT_PUBLIC_SOLANA_RPC_URL=... npm run cf:deploy
    ```
-   `NEXT_PUBLIC_*` values are baked in at build time; `NEXT_PUBLIC_SITE_URL` also goes into Solana metadata URIs and the connector URL. `npm run cf:preview` runs the production build locally in workerd. Any Node host works as well (`npm run build && npm start`); without `DATABASE_URL` it falls back to embedded PGlite. Use dedicated RPC URLs: the public endpoints rate-limit hard.
+   Move `.env.local` aside for the build if it holds local values (an anvil RPC, a local factory): Next.js loads it into the production bundle otherwise. `NEXT_PUBLIC_*` values are baked in at build time; `NEXT_PUBLIC_SITE_URL` also goes into Solana metadata URIs and the connector URL. `npm run cf:preview` runs the production build locally in workerd. Any Node host works as well (`npm run build && npm start`); without `DATABASE_URL` it falls back to embedded PGlite. Use dedicated RPC URLs: the public endpoints rate-limit hard.
 
 ## Collecting revenue
 
-- **Robinhood Chain.** Launch fees, the platform share of trade fees, graduation fees and leftovers accrue in the factory. Anyone can send them to the treasury:
-  `cast send <factory> "withdrawProtocolFees()" --rpc-url https://rpc.mainnet.chain.robinhood.com --account <keystore>`.
+- **Robinhood Chain.** Launch fees, the platform share of trade fees, graduation fees and leftovers accrue in the factory. Anyone can send them to the treasury (the call pays out to the treasury, never to the caller):
+  ```bash
+  cast send 0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6 "withdrawProtocolFees()" \
+    --rpc-url https://rpc.mainnet.chain.robinhood.com --account <keystore>
+  ```
+  What is waiting: `cast call 0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6 "protocolFeesOwed()(uint256)" --rpc-url https://rpc.mainnet.chain.robinhood.com`.
   Pool fees on graduated tokens: `collectLpFees(token)`, also callable from each token page. The treasury share goes straight to the treasury.
 - **Solana.** The launch fee arrives in the treasury inside each launch bundle. Creator fees are paid out by a permissionless payout that sends 70% to the fee wallet and 30% to the treasury; token pages have a button for it, and this pays out every launch at once:
   ```bash
   SITE=https://<domain> SOLANA_KEYPAIR=<any funded keypair> node scripts/solana-payout-all.ts [--send]
   ```
+
+## Operating the Robinhood Chain factory
+
+Owner-only calls, all bounded by the caps in the contract (launch fee at most 0.05 ETH, trade fee at most 2%, graduation fee at most 10%). Changes apply to tokens launched afterwards; every existing token keeps the terms it launched with.
+
+```bash
+F=0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6
+RPC=https://rpc.mainnet.chain.robinhood.com
+
+# Change fees or the treasury, or pause new launches (last argument true). Arguments:
+# treasury, launch fee (wei), trade fee (bps), creator share (bps), graduation fee (bps), paused
+cast send $F "setConfig(address,uint256,uint16,uint16,uint16,bool)" \
+  0xc0dEc2b113E235856eC26AFe33B34Fd07F90D997 500000000000000 100 7000 0 false --rpc-url $RPC --account <owner>
+
+# Rotate the launch attester (then update the ATTESTER_PRIVATE_KEY Worker secret to match)
+cast send $F "setAttester(address)" <new attester> --rpc-url $RPC --account <owner>
+
+# Hand ownership to a new wallet. Two steps (Ownable2Step), so a typo cannot lose the contract:
+cast send $F "transferOwnership(address)" <new owner> --rpc-url $RPC --account <owner>
+cast send $F "acceptOwnership()" --rpc-url $RPC --account <new owner>
+```
 
 ## Claude connector and npm package
 

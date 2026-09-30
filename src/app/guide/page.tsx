@@ -4,9 +4,11 @@ import Link from 'next/link';
 import { CopyButton } from '@/components/CopyButton';
 import { Faq } from '@/components/Faq';
 import { FeeTable } from '@/components/FeeTable';
-import { chainLabel, explorer, PAD_FACTORY, SITE_URL } from '@/lib/config';
+import { chainLabel, explorer, PAD_FACTORY, SITE_URL, SOLANA_TREASURY, type ChainKey } from '@/lib/config';
+import { readFactoryAddresses } from '@/lib/evm/client';
 import { FAQ } from '@/lib/faq';
 import { feeSchedules } from '@/lib/fees';
+import { attesters } from '@/lib/origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,13 +24,18 @@ const SECTIONS = [
 	['fees', 'fees'],
 	['curve', 'the curve'],
 	['after', 'after launch'],
+	['contracts', 'contracts'],
 	['provenance', 'provenance'],
 	['tools', 'connector tools'],
 	['faq', 'faq'],
 ] as const;
 
 export default async function GuidePage() {
-	const schedules = await feeSchedules();
+	const [schedules, rhAddresses] = await Promise.all([
+		feeSchedules(),
+		PAD_FACTORY ? readFactoryAddresses().catch(() => null) : Promise.resolve(null),
+	]);
+	const keys = attesters();
 	const connectorUrl = `${SITE_URL}/mcp`;
 	const rh = schedules.robinhood;
 	const sol = schedules.solana;
@@ -169,7 +176,36 @@ export default async function GuidePage() {
 					</li>
 				</ul>
 
-				<h2 id="provenance">7. provenance: born from a prompt</h2>
+				<h2 id="contracts">7. contracts and addresses</h2>
+				<p>
+					every address the platform uses, read live from the chain. revenue only ever moves to the treasury, and the
+					fee settings can only change within the caps written into the contract.
+				</p>
+				<h3>{chainLabel('robinhood').toLowerCase()}</h3>
+				{PAD_FACTORY ? (
+					<ul>
+						<AddressRow chain="robinhood" label="launch contract (PadFactory)" value={PAD_FACTORY} />
+						<AddressRow chain="robinhood" label="platform treasury" value={rhAddresses?.treasury ?? null} />
+						<AddressRow chain="robinhood" label="owner (can change fees within the caps, pause launches)" value={rhAddresses?.owner ?? null} />
+						{rhAddresses?.pendingOwner ? (
+							<AddressRow chain="robinhood" label="ownership being handed to" value={rhAddresses.pendingOwner} />
+						) : null}
+						<AddressRow chain="robinhood" label="launch attester (signs prompt and site launches)" value={rhAddresses?.attester ?? keys.robinhood} />
+					</ul>
+				) : (
+					<p className="muted">launches on robinhood chain are not open on this deployment yet.</p>
+				)}
+				<h3>{chainLabel('solana').toLowerCase()}</h3>
+				{SOLANA_TREASURY ? (
+					<ul>
+						<AddressRow chain="solana" label="platform treasury" value={SOLANA_TREASURY} />
+						<AddressRow chain="solana" label="launch attester (co-signs the provenance memo)" value={keys.solana} />
+					</ul>
+				) : (
+					<p className="muted">launches on solana are not open on this deployment yet.</p>
+				)}
+
+				<h2 id="provenance">8. provenance: born from a prompt</h2>
 				<p>
 					every launch prepared here carries a signature from the platform&apos;s attester key, checked on-chain. on
 					robinhood chain the launch contract verifies it and records the channel (site or prompt) in a{' '}
@@ -182,7 +218,7 @@ export default async function GuidePage() {
 					verification recipe for other indexers.
 				</p>
 
-				<h2 id="tools">8. connector tools</h2>
+				<h2 id="tools">9. connector tools</h2>
 				<p>what claude can call through {connectorUrl}:</p>
 				<ul>
 					<li>
@@ -202,11 +238,26 @@ export default async function GuidePage() {
 					</li>
 				</ul>
 
-				<h2 id="faq">9. faq</h2>
+				<h2 id="faq">10. faq</h2>
 			</article>
 			<div style={{ maxWidth: 720 }}>
 				<Faq items={FAQ} />
 			</div>
 		</div>
+	);
+}
+
+function AddressRow({ chain, label, value }: { chain: ChainKey; label: string; value: string | null }) {
+	return (
+		<li>
+			{label}:{' '}
+			{value ? (
+				<a href={explorer(chain, 'address', value)} className="mono" target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>
+					{value}
+				</a>
+			) : (
+				<span className="muted">unavailable right now, reload in a moment</span>
+			)}
+		</li>
 	);
 }
