@@ -1,4 +1,4 @@
-# promptpad
+# promptpad 
 
 **Live at [promptpad.fun](https://promptpad.fun)** · connector `https://promptpad.fun/mcp`
 
