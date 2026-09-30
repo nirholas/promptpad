@@ -3,8 +3,13 @@ import 'server-only';
 import { onWorkers } from './runtime';
 
 /**
- * Postgres when DATABASE_URL is set (production), an embedded file-backed Postgres (PGlite) under
- * `.data/` otherwise, so a fresh clone runs with zero setup. Both speak the same SQL.
+ * One portable SQL dialect (the subset Postgres and SQLite share), three backends:
+ * - Cloudflare Workers: the D1 binding `DB` (schema in migrations/d1), or Postgres through
+ *   Hyperdrive / DATABASE_URL when set.
+ * - Node with DATABASE_URL: Postgres.
+ * - Node without it: an embedded file-backed Postgres (PGlite) under `.data/`, so a fresh clone
+ *   runs with zero setup.
+ * Timestamps are written as ISO strings from JS, so no dialect-specific time functions are used.
  */
 
 type Row = Record<string, unknown>;
@@ -71,11 +76,30 @@ create table if not exists sync_state (
 let ready: Promise<Query> | null = null;
 
 
-async function workersConnectionString(): Promise<string | null> {
+type D1Database = {
+	prepare(query: string): { bind(...values: unknown[]): { all<T>(): Promise<{ results: T[] }> } };
+};
+
+type WorkersEnv = { HYPERDRIVE?: { connectionString: string }; DB?: D1Database };
+
+async function workersEnv(): Promise<WorkersEnv> {
 	const { getCloudflareContext } = await import('@opennextjs/cloudflare');
-	const { env } = await getCloudflareContext({ async: true });
-	const hyperdrive = (env as { HYPERDRIVE?: { connectionString: string } }).HYPERDRIVE;
-	return hyperdrive?.connectionString ?? process.env.DATABASE_URL ?? null;
+	return (await getCloudflareContext({ async: true })).env as WorkersEnv;
+}
+
+async function workersConnectionString(): Promise<string | null> {
+	return (await workersEnv()).HYPERDRIVE?.connectionString ?? process.env.DATABASE_URL ?? null;
+}
+
+/** SQLite binds `?N`, booleans as 0/1, and never undefined. */
+function d1Query(): Query {
+	return async <T extends Row>(text: string, params: unknown[] = []) => {
+		const db = (await workersEnv()).DB;
+		if (!db) throw new Error('No database: bind D1 as DB, or set DATABASE_URL / HYPERDRIVE.');
+		const values = params.map((p) => (typeof p === 'boolean' ? (p ? 1 : 0) : p === undefined ? null : p));
+		const { results } = await db.prepare(text.replace(/\$(\d+)/g, '?$1')).bind(...values).all<T>();
+		return results;
+	};
 }
 
 /**
@@ -100,7 +124,7 @@ async function connectWorkers(): Promise<Query> {
 }
 
 async function connect(): Promise<Query> {
-	if (onWorkers) return connectWorkers();
+	if (onWorkers) return (await workersConnectionString()) ? connectWorkers() : d1Query();
 	if (process.env.DATABASE_URL) {
 		const { Pool } = await import('pg');
 		const pool = new Pool({

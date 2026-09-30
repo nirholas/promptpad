@@ -16,8 +16,15 @@
 			"service": "promptpad"
 		}
 	],
-	"observability": { "enabled": true }
-	// Postgres: either set the DATABASE_URL secret (Neon or any Postgres reachable over TCP), or bind
-	// Hyperdrive in front of it for pooled, low-latency connections:
-	// "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<wrangler hyperdrive create ... output>" }]
+	"observability": { "enabled": true },
+	// Registry and drafts live in D1 (schema: migrations/d1). Setting a DATABASE_URL secret or a
+	// HYPERDRIVE binding switches the same code to Postgres instead.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "promptpad",
+			"database_id": "7321e68b-15c7-4e30-874f-13af98aa0fd0",
+			"migrations_dir": "migrations/d1"
+		}
+	]
 }

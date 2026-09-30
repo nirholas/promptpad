@@ -96,9 +96,9 @@ function toLaunch(r: LaunchRow): Launch {
 		feeWallet: r.fee_wallet,
 		tx: r.tx,
 		source: r.source,
-		graduated: r.graduated,
+		graduated: Boolean(r.graduated),
 		channel: Number(r.channel),
-		attested: r.attested,
+		attested: Boolean(r.attested),
 		client: r.client,
 		createdAt: iso(r.created_at),
 	};
@@ -124,8 +124,8 @@ export async function createDraft(input: LaunchInput, source: Draft['source'], c
 	if (taken.length) throw new LaunchError(`$${input.symbol} is already in the registry as #${taken[0].number}.`, 409);
 
 	const rows = await sql<DraftRow>(
-		`insert into drafts (id, chain, name, symbol, image, description, fee_wallet, initial_buy, source, client, expires_at)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now() + ($11 || ' hours')::interval)
+		`insert into drafts (id, chain, name, symbol, image, description, fee_wallet, initial_buy, source, client, created_at, expires_at)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 returning *`,
 		[
 			newDraftId(),
@@ -138,7 +138,8 @@ export async function createDraft(input: LaunchInput, source: Draft['source'], c
 			input.initialBuy,
 			source,
 			client ? client.slice(0, 120) : null,
-			String(DRAFT_TTL_HOURS),
+			new Date().toISOString(),
+			new Date(Date.now() + DRAFT_TTL_HOURS * 3_600_000).toISOString(),
 		],
 	);
 	return toDraft(rows[0]);
@@ -198,7 +199,7 @@ async function upsertLaunchOnce(l: NewLaunch): Promise<Launch | null> {
 			draft_id = coalesce(draft_id, $4),
 			source = case when source = 'chain' then $5 else source end,
 			pool = coalesce($6, pool),
-			channel = greatest(channel, $7),
+			channel = case when channel > $7 then channel else $7 end,
 			attested = attested or $8,
 			client = coalesce(client, $9)
 		 where chain = $1 and address = $2
@@ -209,7 +210,7 @@ async function upsertLaunchOnce(l: NewLaunch): Promise<Launch | null> {
 
 	const inserted = await sql<LaunchRow>(
 		`insert into launches (chain, address, pool, name, symbol, image, description, creator, fee_wallet, tx, draft_id, source, graduated, created_at, channel, attested, client, number)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14::timestamptz, now()), $15, $16, $17,
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
 			(select coalesce(max(number), 0) + 1 from launches))
 		 on conflict (chain, address) do nothing
 		 returning *`,
@@ -227,7 +228,7 @@ async function upsertLaunchOnce(l: NewLaunch): Promise<Launch | null> {
 			l.draftId ?? null,
 			l.source,
 			l.graduated,
-			l.createdAt ?? null,
+			l.createdAt ?? new Date().toISOString(),
 			l.channel,
 			l.attested,
 			l.client,
@@ -354,7 +355,9 @@ export async function markGraduated(chain: ChainKey, address: string, pool: stri
 
 export async function stats() {
 	const rows = await sql<{ chain: ChainKey; n: string | number; g: string | number; p: string | number }>(
-		`select chain, count(*) as n, count(*) filter (where graduated) as g, count(*) filter (where channel = 2) as p
+		`select chain, count(*) as n,
+			sum(case when graduated then 1 else 0 end) as g,
+			sum(case when channel = 2 then 1 else 0 end) as p
 		 from launches group by chain`,
 	);
 	const by = Object.fromEntries(
@@ -373,12 +376,13 @@ const SYNC_INTERVAL_MS = 60_000;
  * Throttled through the database so concurrent requests and instances share one cadence.
  */
 export async function syncRegistry() {
+	const now = new Date();
 	const claimed = await sql(
-		`insert into sync_state (key, value, updated_at) values ('registry', '0', now())
-		 on conflict (key) do update set updated_at = now()
-		 where sync_state.updated_at < now() - ($1 || ' milliseconds')::interval
+		`insert into sync_state (key, value, updated_at) values ('registry', '0', $1)
+		 on conflict (key) do update set updated_at = $1
+		 where sync_state.updated_at < $2
 		 returning key`,
-		[String(SYNC_INTERVAL_MS)],
+		[now.toISOString(), new Date(now.getTime() - SYNC_INTERVAL_MS).toISOString()],
 	);
 	if (!claimed.length) return;
 	await Promise.allSettled([chainEnabled('robinhood') && syncEvm(), chainEnabled('solana') && syncSolana()]);
@@ -429,9 +433,9 @@ async function syncEvm() {
 			});
 		}
 		await sql(
-			`insert into sync_state (key, value) values ($1, $2)
-			 on conflict (key) do update set value = excluded.value, updated_at = now()`,
-			[cursorKey, String(to)],
+			`insert into sync_state (key, value, updated_at) values ($1, $2, $3)
+			 on conflict (key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+			[cursorKey, String(to), new Date().toISOString()],
 		);
 	}
 
