@@ -2,7 +2,7 @@
 
 Launch a token on **Robinhood Chain** or **Solana** from any MCP client. Describe the token in chat; the server validates it and returns a checkout link where you connect your own wallet, see the exact fee, and sign. Nothing is deployed and nothing is spent before you sign.
 
-This package is a small stdio bridge to the hosted MCP server, for clients that start servers with `npx`. Clients that support remote connectors (Claude on the web and desktop) can add the `/mcp` URL directly instead.
+This package is a small stdio bridge to the hosted MCP server, for clients that start servers with `npx`. Clients that support remote connectors (Claude on the web and desktop) can add `https://promptpad.fun/mcp` directly instead.
 
 ## Use it
 

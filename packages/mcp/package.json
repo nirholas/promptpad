@@ -6,18 +6,29 @@
   "bin": {
     "promptpad-mcp": "bin/promptpad-mcp.js"
   },
-  "files": ["bin", "README.md"],
+  "files": [
+    "bin",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["mcp", "model-context-protocol", "claude", "token-launchpad", "robinhood-chain", "solana", "bonding-curve"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "token-launchpad",
+    "robinhood-chain",
+    "solana",
+    "bonding-curve"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nirholas/promptpad.git",
     "directory": "packages/mcp"
   },
-  "homepage": "https://github.com/nirholas/promptpad#readme",
+  "homepage": "https://promptpad.fun",
   "mcpName": "io.github.nirholas/promptpad",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0"

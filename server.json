@@ -14,7 +14,9 @@
       "registryType": "npm",
       "identifier": "promptpad-mcp",
       "version": "0.1.0",
-      "transport": { "type": "stdio" },
+      "transport": {
+        "type": "stdio"
+      },
       "environmentVariables": [
         {
           "name": "PROMPTPAD_URL",
@@ -24,5 +26,12 @@
         }
       ]
     }
-  ]
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://promptpad.fun/mcp"
+    }
+  ],
+  "websiteUrl": "https://promptpad.fun"
 }

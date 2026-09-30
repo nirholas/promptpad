@@ -1,5 +1,7 @@
 # promptpad
 
+**Live at [promptpad.fun](https://promptpad.fun)** · connector `https://promptpad.fun/mcp`
+
 Launch a token from a prompt. Tell Claude (through a remote MCP connector) or fill in a short form, and the token goes live on **Robinhood Chain** or **Solana** on a bonding curve that graduates into locked liquidity. The launcher signs from their own wallet; the fee wallet they name earns the creator share of every trade forever.
 
 The economics, identical in shape on both chains:
@@ -128,7 +130,7 @@ These steps spend real funds and are run by the owner.
 
 ## Claude connector and npm package
 
-In Claude: settings, connectors, add custom connector, then paste `https://<your-domain>/mcp`. Clients that start servers with `npx` (Claude Desktop, Cursor, Cline) use the stdio bridge in [`packages/mcp`](packages/mcp): `npx -y promptpad-mcp`. [`server.json`](server.json) is the MCP registry entry. The tools:
+In Claude: settings, connectors, add custom connector, then paste `https://promptpad.fun/mcp`. Clients that start servers with `npx` (Claude Desktop, Cursor, Cline) use the stdio bridge in [`packages/mcp`](packages/mcp): `npx -y promptpad-mcp`. [`server.json`](server.json) is the MCP registry entry. The tools:
 
 | tool | what it does |
 |---|---|

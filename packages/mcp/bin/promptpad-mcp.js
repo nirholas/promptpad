@@ -12,8 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const VERSION = '0.1.0';
-// Set at release time to the production /mcp endpoint.
-const DEFAULT_URL = '';
+const DEFAULT_URL = 'https://promptpad.fun/mcp';
 const target = process.env.PROMPTPAD_URL || DEFAULT_URL;
 if (!target) {
 	console.error('Set PROMPTPAD_URL to the launchpad MCP endpoint, e.g. https://<your-domain>/mcp');

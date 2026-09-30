@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { OnlinePumpSdk } from '@pump-fun/pump-sdk';
 import { Connection, Keypair, PublicKey, sendAndConfirmTransaction, Transaction } from '@solana/web3.js';
 
-const site = (process.env.SITE || 'https://promptpad.ninabrekkerese.workers.dev').replace(/\/$/, '');
+const site = (process.env.SITE || 'https://promptpad.fun').replace(/\/$/, '');
 const rpc = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const keypairPath = (process.env.SOLANA_KEYPAIR || '~/.config/solana/id.json').replace(/^~/, homedir());
 const send = process.argv.includes('--send');
