@@ -2,6 +2,11 @@
 
 **Live at [promptpad.fun](https://promptpad.fun)** · connector `https://promptpad.fun/mcp`
 
+| Chain | Contract | Status |
+|---|---|---|
+| Robinhood Chain (4663) | PadFactory [`0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6`](https://robinhoodchain.blockscout.com/address/0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6) | live: 0.0005 ETH launch fee, 1% trade fee (70% to creators), graduates at 4.2 ETH |
+| Solana | pump.fun program | closed until `NEXT_PUBLIC_SOLANA_TREASURY` is set |
+
 Launch a token from a prompt. Tell Claude (through a remote MCP connector) or fill in a short form, and the token goes live on **Robinhood Chain** or **Solana** on a bonding curve that graduates into locked liquidity. The launcher signs from their own wallet; the fee wallet they name earns the creator share of every trade forever.
 
 The economics, identical in shape on both chains:

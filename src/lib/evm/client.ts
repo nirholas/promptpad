@@ -1,17 +1,24 @@
 import 'server-only';
 
-import { createPublicClient, decodeEventLog, http, parseAbi, type Address, type Hash } from 'viem';
+import { createPublicClient, decodeEventLog, fallback, http, parseAbi, type Address, type Hash } from 'viem';
 
 import { PAD_FACTORY, robinhoodChain, ROBINHOOD_WETH } from '../config';
 import { padFactoryAbi, padTokenAbi } from './abi';
 import type { TokenState } from '../types';
 
+// A second public endpoint behind the primary, so one provider throttling the platform's shared
+// egress addresses does not read as "launches closed".
+const rpcUrls = [
+	process.env.ROBINHOOD_RPC_URL || robinhoodChain.rpcUrls.default.http[0],
+	...(robinhoodChain.testnet ? [] : ['https://robinhood-rpc.publicnode.com']),
+];
+
 export const evmClient = createPublicClient({
 	chain: robinhoodChain,
-	transport: http(process.env.ROBINHOOD_RPC_URL || robinhoodChain.rpcUrls.default.http[0], {
-		retryCount: 2,
-		timeout: 15_000,
-	}),
+	transport: fallback(
+		rpcUrls.map((url) => http(url, { retryCount: 1, timeout: 10_000 })),
+		{ retryCount: 1 },
+	),
 	batch: { multicall: true },
 });
 
@@ -77,7 +84,25 @@ export async function readEvmOrigin(token: Address) {
 	return { channel: Number(channel), ref };
 }
 
+let lastFactoryConfig: { at: number; value: Awaited<ReturnType<typeof fetchFactoryConfig>> } | null = null;
+const FACTORY_CONFIG_STALE_MS = 10 * 60_000;
+
+/**
+ * Factory terms, falling back to the last good read for a few minutes when the RPC blips. The terms
+ * change only through an owner transaction, so a minutes-old copy is still correct in practice.
+ */
 export async function readFactoryConfig() {
+	try {
+		const value = await fetchFactoryConfig();
+		lastFactoryConfig = { at: Date.now(), value };
+		return value;
+	} catch (error) {
+		if (lastFactoryConfig && Date.now() - lastFactoryConfig.at < FACTORY_CONFIG_STALE_MS) return lastFactoryConfig.value;
+		throw error;
+	}
+}
+
+async function fetchFactoryConfig() {
 	const address = factory();
 	const [launchFee, tradeFeeBps, creatorShareBps, graduationFeeBps, targetRaise, launchesPaused, tokenCount, snipeStartBps, snipeWindow] =
 		await Promise.all([

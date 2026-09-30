@@ -59,10 +59,12 @@ export async function feeSchedule(chain: ChainKey): Promise<FeeSchedule | null> 
 }
 
 export async function feeSchedules() {
-	const [robinhood, solana] = await Promise.all([
-		feeSchedule('robinhood').catch(() => null),
-		feeSchedule('solana').catch(() => null),
-	]);
+	const read = (chain: ChainKey) =>
+		feeSchedule(chain).catch((error) => {
+			console.error(`fee schedule read failed for ${chain}:`, error instanceof Error ? error.message : error);
+			return null;
+		});
+	const [robinhood, solana] = await Promise.all([read('robinhood'), read('solana')]);
 	return { robinhood, solana };
 }
 
