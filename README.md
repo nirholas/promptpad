@@ -31,6 +31,14 @@ Site form ───▶ POST /api/drafts ─────┘                      
 - **The registry is chain-truthful.** Launches are recorded only after the transaction is verified on-chain, and launches made straight against the contracts (outside the site) are backfilled and numbered too. Registry numbers are gapless.
 - **Resumable.** Reopening a checkout after signing picks the launch back up.
 
+### Provenance: which coins were born from a prompt
+
+Every launch the platform prepares is attested, so "launched from a prompt in Claude" is provable from chain data alone. It does not depend on our database.
+
+- **Robinhood Chain.** The site signs an EIP-712 `Launch` message (exact name, ticker, logo, description, fee wallet, the sending wallet, channel, a one-time reference and a deadline) with the attester key. `PadFactory` verifies it and emits `LaunchOrigin(token, channel, ref)`, with channel `1` for the site and `2` for a prompt. Forged, replayed, expired or altered attestations revert. A direct contract call without one is recorded as channel `0`.
+- **Solana.** The pool-creation transaction carries a Memo `<tag>:v1:<site|prompt>:<draftId>` whose required signer is the attester. The mint keypair signs only that exact transaction, so the attestation cannot be moved onto another token.
+- **Aggregating.** `GET /api/launches?origin=prompt` is the feed, and the registry page has a "born from a prompt" filter. `/.well-known/launch-provenance.json` publishes the attester keys, contract and config addresses, and the recipe any indexer can follow without our API: filter `LaunchOrigin` logs by `channel == 2`, or read each DBC mint's first transaction for the signed memo. The MCP client that prepared a launch (for example Claude) is also recorded from its User-Agent and shown as "born in claude".
+
 ### Robinhood Chain contracts ([`contracts/`](contracts))
 
 - `PadToken`: fixed 1B supply ERC20, no owner, no mint, no tax. Name, symbol, image and description are set at birth.
@@ -91,7 +99,17 @@ These steps spend real funds and are run by the owner.
    SOLANA_RPC_URL=<rpc> SOLANA_PARTNER_KEYPAIR=<keypair.json> node scripts/solana-create-config.ts --send
    ```
    Set `NEXT_PUBLIC_DBC_CONFIG` to the printed address. The keypair becomes the fee claimer (override with `SOLANA_FEE_CLAIMER`).
-3. **Hosting.** Any Node host works (`npm run build && npm start`). Set `NEXT_PUBLIC_SITE_URL` (it is baked into Solana metadata URIs and the connector URL), `DATABASE_URL`, and dedicated RPC URLs (`SOLANA_RPC_URL` must allow `getProgramAccounts` for registry backfill; the public endpoints rate-limit hard).
+3. **Attester keys.** Generate one EVM key and one Solana key. Keep them as secrets (`ATTESTER_PRIVATE_KEY`, `ATTESTER_SOLANA_SECRET`), and pass the EVM address as `PAD_ATTESTER` when deploying the factory (or call `setAttester` later).
+4. **Hosting on Cloudflare Workers** (via OpenNext; the bundle is about 5.4 MB gzipped, so it needs the Workers Paid plan):
+   ```bash
+   # Postgres: Neon (or any Postgres), optionally fronted by Hyperdrive (see wrangler.jsonc)
+   npx wrangler secret put DATABASE_URL
+   npx wrangler secret put ATTESTER_PRIVATE_KEY
+   npx wrangler secret put ATTESTER_SOLANA_SECRET
+   NEXT_PUBLIC_SITE_URL=https://<domain> NEXT_PUBLIC_PAD_FACTORY=... NEXT_PUBLIC_DBC_CONFIG=... \
+     NEXT_PUBLIC_SOLANA_RPC_URL=... npm run cf:deploy
+   ```
+   `NEXT_PUBLIC_*` values are baked in at build time; `NEXT_PUBLIC_SITE_URL` also goes into Solana metadata URIs and the connector URL. `npm run cf:preview` runs the production build locally in workerd. Any Node host works as well (`npm run build && npm start`); without `DATABASE_URL` it falls back to embedded PGlite. Use dedicated RPC URLs: `SOLANA_RPC_URL` must allow `getProgramAccounts` for registry backfill, and the public endpoints rate-limit hard.
 
 ## Collecting revenue
 
@@ -103,9 +121,9 @@ These steps spend real funds and are run by the owner.
   NEXT_PUBLIC_DBC_CONFIG=<config> SOLANA_PARTNER_KEYPAIR=<fee claimer> node scripts/solana-claim-partner-fees.ts [--send]
   ```
 
-## Claude connector
+## Claude connector and npm package
 
-In Claude: settings, connectors, add custom connector, then paste `https://<your-domain>/mcp`. The tools:
+In Claude: settings, connectors, add custom connector, then paste `https://<your-domain>/mcp`. Clients that start servers with `npx` (Claude Desktop, Cursor, Cline) use the stdio bridge in [`packages/mcp`](packages/mcp): `npx -y promptpad-mcp`. [`server.json`](server.json) is the MCP registry entry. The tools:
 
 | tool | what it does |
 |---|---|
@@ -124,4 +142,7 @@ In Claude: settings, connectors, add custom connector, then paste `https://<your
 | `src/lib/evm/`, `src/lib/solana/` | chain reads, transaction builders, the Solana economics |
 | `src/lib/launches.ts` | drafts, on-chain verification, registry and chain backfill |
 | `scripts/` | ABI generation, Solana config creation, Solana fee collection |
+| `packages/mcp/` | `promptpad-mcp`, the stdio bridge published to npm |
+| `src/lib/origin.ts` | launch provenance: EIP-712 attestations and the Solana memo |
+| `wrangler.jsonc`, `open-next.config.ts` | Cloudflare Workers deployment |
 | `tests/` | vitest suites |

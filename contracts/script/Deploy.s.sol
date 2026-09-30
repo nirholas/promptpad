@@ -9,7 +9,8 @@ import {IUniswapV3Factory, INonfungiblePositionManager, IWETH9} from "../src/int
 /// forge script script/Deploy.s.sol --rpc-url robinhood --account deployer --broadcast
 ///
 /// Env: PAD_OWNER, PAD_TREASURY (required). Optional overrides: PAD_TARGET_RAISE_WEI,
-/// PAD_LAUNCH_FEE_WEI, PAD_TRADE_FEE_BPS, PAD_CREATOR_SHARE_BPS, PAD_GRADUATION_FEE_BPS.
+/// PAD_LAUNCH_FEE_WEI, PAD_TRADE_FEE_BPS, PAD_CREATOR_SHARE_BPS, PAD_GRADUATION_FEE_BPS, and
+/// PAD_ATTESTER (address of the key the site signs launch origins with; see README "Provenance").
 contract Deploy is Script {
     struct Uniswap {
         address weth;
@@ -26,6 +27,7 @@ contract Deploy is Script {
         uint16 tradeFeeBps = uint16(vm.envOr("PAD_TRADE_FEE_BPS", uint256(100)));
         uint16 creatorShareBps = uint16(vm.envOr("PAD_CREATOR_SHARE_BPS", uint256(5_000)));
         uint16 graduationFeeBps = uint16(vm.envOr("PAD_GRADUATION_FEE_BPS", uint256(300)));
+        address launchAttester = vm.envOr("PAD_ATTESTER", address(0));
 
         vm.startBroadcast();
         factory = new PadFactory(
@@ -38,7 +40,8 @@ contract Deploy is Script {
             launchFee,
             tradeFeeBps,
             creatorShareBps,
-            graduationFeeBps
+            graduationFeeBps,
+            launchAttester
         );
         vm.stopBroadcast();
 

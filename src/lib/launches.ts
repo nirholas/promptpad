@@ -5,9 +5,9 @@ import type { Address, Hash } from 'viem';
 
 import { chainEnabled, DRAFT_TTL_HOURS, PAD_FACTORY, type ChainKey } from './config';
 import { sql } from './db';
-import { readEvmTokenState, readFactoryConfig, readFactoryTokens, readLaunchFromTx, readTokenMetadata } from './evm/client';
+import { readEvmOrigin, readEvmTokenState, readFactoryConfig, readFactoryTokens, readLaunchFromTx, readTokenMetadata } from './evm/client';
 import { publicFetch } from './net';
-import { findPoolByMint, listConfigPools, readMintMetadata } from './solana/dbc';
+import { findPoolByMint, listConfigPools, readMintMetadata, readSolanaOrigin } from './solana/dbc';
 import type { Draft, Launch } from './types';
 import type { LaunchInput } from './validate';
 
@@ -33,6 +33,7 @@ type DraftRow = {
 	initial_buy: string;
 	source: 'web' | 'claude';
 	mint: string | null;
+	client: string | null;
 	created_at: Date | string;
 	expires_at: Date | string;
 	launch_id: number | null;
@@ -53,6 +54,9 @@ type LaunchRow = {
 	tx: string | null;
 	source: Launch['source'];
 	graduated: boolean;
+	channel: number;
+	attested: boolean;
+	client: string | null;
 	created_at: Date | string;
 };
 
@@ -70,6 +74,7 @@ function toDraft(r: DraftRow): Draft {
 		initialBuy: r.initial_buy,
 		source: r.source,
 		mint: r.mint,
+		client: r.client,
 		createdAt: iso(r.created_at),
 		expiresAt: iso(r.expires_at),
 		launchId: r.launch_id,
@@ -92,6 +97,9 @@ function toLaunch(r: LaunchRow): Launch {
 		tx: r.tx,
 		source: r.source,
 		graduated: r.graduated,
+		channel: Number(r.channel),
+		attested: r.attested,
+		client: r.client,
 		createdAt: iso(r.created_at),
 	};
 }
@@ -105,7 +113,7 @@ function newDraftId() {
 	return Array.from(bytes, (b) => ID_ALPHABET[b % ID_ALPHABET.length]).join('');
 }
 
-export async function createDraft(input: LaunchInput, source: Draft['source']): Promise<Draft> {
+export async function createDraft(input: LaunchInput, source: Draft['source'], client: string | null = null): Promise<Draft> {
 	if (!chainEnabled(input.chain)) {
 		throw new LaunchError(`Launches on ${input.chain} are not open yet on this deployment.`, 503);
 	}
@@ -116,8 +124,8 @@ export async function createDraft(input: LaunchInput, source: Draft['source']): 
 	if (taken.length) throw new LaunchError(`$${input.symbol} is already in the registry as #${taken[0].number}.`, 409);
 
 	const rows = await sql<DraftRow>(
-		`insert into drafts (id, chain, name, symbol, image, description, fee_wallet, initial_buy, source, expires_at)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + ($10 || ' hours')::interval)
+		`insert into drafts (id, chain, name, symbol, image, description, fee_wallet, initial_buy, source, client, expires_at)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now() + ($11 || ' hours')::interval)
 		 returning *`,
 		[
 			newDraftId(),
@@ -129,6 +137,7 @@ export async function createDraft(input: LaunchInput, source: Draft['source']): 
 			input.feeWallet,
 			input.initialBuy,
 			source,
+			client ? client.slice(0, 120) : null,
 			String(DRAFT_TTL_HOURS),
 		],
 	);
@@ -151,6 +160,13 @@ export async function setDraftMint(id: string, mint: string) {
 // ---------------------------------------------------------------- recording launches
 
 type NewLaunch = Omit<Launch, 'id' | 'number' | 'createdAt'> & { createdAt?: string; draftId?: string | null };
+
+/** On-chain channel wins; a draft-linked launch without an attestation keeps its draft's source. */
+function sourceFor(channel: number, draftSource: Draft['source'] | null): Launch['source'] {
+	if (channel === 2) return 'claude';
+	if (channel === 1) return 'web';
+	return draftSource ?? 'chain';
+}
 
 /**
  * Records a launch, or enriches the existing row for the same token (a launch the chain sync found
@@ -181,16 +197,19 @@ async function upsertLaunchOnce(l: NewLaunch): Promise<Launch | null> {
 			tx = coalesce(tx, $3),
 			draft_id = coalesce(draft_id, $4),
 			source = case when source = 'chain' then $5 else source end,
-			pool = coalesce($6, pool)
+			pool = coalesce($6, pool),
+			channel = greatest(channel, $7),
+			attested = attested or $8,
+			client = coalesce(client, $9)
 		 where chain = $1 and address = $2
 		 returning *`,
-		[l.chain, l.address, l.tx, l.draftId ?? null, l.source, l.pool],
+		[l.chain, l.address, l.tx, l.draftId ?? null, l.source, l.pool, l.channel, l.attested, l.client],
 	);
 	if (updated[0]) return toLaunch(updated[0]);
 
 	const inserted = await sql<LaunchRow>(
-		`insert into launches (chain, address, pool, name, symbol, image, description, creator, fee_wallet, tx, draft_id, source, graduated, created_at, number)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14::timestamptz, now()),
+		`insert into launches (chain, address, pool, name, symbol, image, description, creator, fee_wallet, tx, draft_id, source, graduated, created_at, channel, attested, client, number)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14::timestamptz, now()), $15, $16, $17,
 			(select coalesce(max(number), 0) + 1 from launches))
 		 on conflict (chain, address) do nothing
 		 returning *`,
@@ -209,6 +228,9 @@ async function upsertLaunchOnce(l: NewLaunch): Promise<Launch | null> {
 			l.source,
 			l.graduated,
 			l.createdAt ?? null,
+			l.channel,
+			l.attested,
+			l.client,
 		],
 	);
 	return inserted[0] ? toLaunch(inserted[0]) : null;
@@ -220,9 +242,9 @@ export async function recordEvmLaunch(txHash: string, draftId: string | null): P
 	const event = await readLaunchFromTx(txHash as Hash).catch(() => null);
 	if (!event) throw new LaunchError('No launch found in that transaction yet. It may still be confirming.', 404);
 
-	let source: Launch['source'] = 'chain';
+	let draft: Draft | null = null;
 	if (draftId) {
-		const draft = await getDraft(draftId);
+		draft = await getDraft(draftId);
 		if (!draft) throw new LaunchError('Unknown launch draft.', 404);
 		const matches =
 			draft.chain === 'robinhood' &&
@@ -230,7 +252,6 @@ export async function recordEvmLaunch(txHash: string, draftId: string | null): P
 			draft.name === event.name &&
 			draft.feeWallet.toLowerCase() === event.feeRecipient.toLowerCase();
 		if (!matches) throw new LaunchError('That transaction launched a different token than this draft.', 409);
-		source = draft.source;
 	}
 
 	return insertLaunch({
@@ -244,8 +265,11 @@ export async function recordEvmLaunch(txHash: string, draftId: string | null): P
 		creator: event.creator,
 		feeWallet: event.feeRecipient,
 		tx: txHash,
-		source,
+		source: sourceFor(event.channel, draft?.source ?? null),
 		graduated: false,
+		channel: event.channel,
+		attested: event.channel > 0,
+		client: draft?.client ?? null,
 		draftId,
 	});
 }
@@ -257,6 +281,7 @@ export async function recordSolanaLaunch(draftId: string, signature: string | nu
 	if (!draft.mint) throw new LaunchError('This draft has no launch transaction yet.', 409);
 	const found = await findPoolByMint(draft.mint);
 	if (!found) throw new LaunchError('The pool is not on-chain yet. It may still be confirming.', 404);
+	const origin = await readSolanaOrigin(draft.mint).catch(() => null);
 
 	return insertLaunch({
 		chain: 'solana',
@@ -268,16 +293,21 @@ export async function recordSolanaLaunch(draftId: string, signature: string | nu
 		description: draft.description,
 		creator: found.account.poolState.creator.toBase58(),
 		feeWallet: draft.feeWallet,
-		tx: signature,
-		source: draft.source,
+		tx: signature ?? origin?.signature ?? null,
+		source: sourceFor(origin?.channel ?? 0, draft.source),
 		graduated: false,
+		channel: origin?.channel ?? 0,
+		attested: Boolean(origin),
+		client: draft.client,
 		draftId,
 	});
 }
 
 // ---------------------------------------------------------------- reading
 
-export async function listLaunches(opts: { chain?: ChainKey; limit?: number; offset?: number; q?: string } = {}) {
+export async function listLaunches(
+	opts: { chain?: ChainKey; limit?: number; offset?: number; q?: string; origin?: 'prompt' | 'site' | 'direct' } = {},
+) {
 	const limit = Math.min(Math.max(opts.limit ?? 24, 1), 100);
 	const offset = Math.max(opts.offset ?? 0, 0);
 	const params: unknown[] = [];
@@ -286,6 +316,9 @@ export async function listLaunches(opts: { chain?: ChainKey; limit?: number; off
 		params.push(opts.chain);
 		where.push(`chain = $${params.length}`);
 	}
+	if (opts.origin === 'prompt') where.push(`(channel = 2 or source = 'claude')`);
+	if (opts.origin === 'site') where.push(`(channel = 1 or (channel = 0 and source = 'web'))`);
+	if (opts.origin === 'direct') where.push(`(channel = 0 and source = 'chain')`);
 	if (opts.q?.trim()) {
 		params.push(`%${opts.q.trim().replace(/^\$/, '').toLowerCase()}%`);
 		where.push(`(lower(name) like $${params.length} or lower(symbol) like $${params.length} or lower(address) like $${params.length})`);
@@ -320,14 +353,15 @@ export async function markGraduated(chain: ChainKey, address: string, pool: stri
 }
 
 export async function stats() {
-	const rows = await sql<{ chain: ChainKey; n: string | number; g: string | number }>(
-		'select chain, count(*) as n, count(*) filter (where graduated) as g from launches group by chain',
+	const rows = await sql<{ chain: ChainKey; n: string | number; g: string | number; p: string | number }>(
+		`select chain, count(*) as n, count(*) filter (where graduated) as g, count(*) filter (where channel = 2) as p
+		 from launches group by chain`,
 	);
-	const by = Object.fromEntries(rows.map((r) => [r.chain, { launches: Number(r.n), graduated: Number(r.g) }]));
-	return {
-		robinhood: by.robinhood ?? { launches: 0, graduated: 0 },
-		solana: by.solana ?? { launches: 0, graduated: 0 },
-	};
+	const by = Object.fromEntries(
+		rows.map((r) => [r.chain, { launches: Number(r.n), graduated: Number(r.g), prompt: Number(r.p) }]),
+	);
+	const empty = { launches: 0, graduated: 0, prompt: 0 };
+	return { robinhood: by.robinhood ?? empty, solana: by.solana ?? empty };
 }
 
 // ---------------------------------------------------------------- chain backfill
@@ -362,11 +396,15 @@ async function syncEvm() {
 		for (const token of tokens) {
 			const exists = await getLaunch('robinhood', token);
 			if (exists) continue;
-			const [meta, state] = await Promise.all([readTokenMetadata(token), readEvmTokenState(token)]);
+			const [meta, state, origin] = await Promise.all([
+				readTokenMetadata(token),
+				readEvmTokenState(token),
+				readEvmOrigin(token),
+			]);
 			if (!state) continue;
 			// A launch signed from a checkout whose confirmation never reached us still belongs to its draft.
-			const draft = await sql<{ id: string; source: Draft['source'] }>(
-				`select id, source from drafts where chain = 'robinhood' and launch_id is null and name = $1 and symbol = $2
+			const draft = await sql<{ id: string; source: Draft['source']; client: string | null }>(
+				`select id, source, client from drafts where chain = 'robinhood' and launch_id is null and name = $1 and symbol = $2
 				 and lower(fee_wallet) = lower($3) order by created_at desc limit 1`,
 				[meta.name, meta.symbol, state.feeWallet],
 			);
@@ -382,8 +420,11 @@ async function syncEvm() {
 				creator: meta.creator,
 				feeWallet: state.feeWallet,
 				tx: null,
-				source: draft[0]?.source ?? 'chain',
+				source: sourceFor(origin.channel, draft[0]?.source ?? null),
 				graduated: state.graduated,
+				channel: origin.channel,
+				attested: origin.channel > 0,
+				client: draft[0]?.client ?? null,
 				createdAt: state.createdAt ?? undefined,
 			});
 		}
@@ -418,7 +459,10 @@ async function syncSolana() {
 			await recordSolanaLaunch(draft[0].id, null);
 			continue;
 		}
-		const meta = await readMintMetadata(p.mint);
+		const [meta, origin] = await Promise.all([
+			readMintMetadata(p.mint),
+			readSolanaOrigin(p.mint).catch(() => null),
+		]);
 		if (!meta) continue;
 		const offchain = await fetchOffchainMetadata(meta.uri);
 		await insertLaunch({
@@ -431,9 +475,12 @@ async function syncSolana() {
 			description: offchain.description,
 			creator: p.creator,
 			feeWallet: p.creator,
-			tx: null,
-			source: 'chain',
+			tx: origin?.signature ?? null,
+			source: sourceFor(origin?.channel ?? 0, null),
 			graduated: p.migrated,
+			channel: origin?.channel ?? 0,
+			attested: Boolean(origin),
+			client: null,
 			createdAt: p.activation > 1_000_000_000 ? new Date(p.activation * 1000).toISOString() : undefined,
 		});
 	}

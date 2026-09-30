@@ -4,6 +4,7 @@ import { formatDate, registryNumber } from '@/lib/format';
 import type { Launch } from '@/lib/types';
 import { ChainBadge } from './ChainBadge';
 import { CurveProgress } from './CurveProgress';
+import { OriginChip } from './OriginChip';
 
 export function TokenLogo({ src, alt, size }: { src: string; alt: string; size?: 'lg' }) {
 	return src ? (
@@ -34,7 +35,7 @@ export function TokenCard({ launch }: { launch: Launch }) {
 			<CurveProgress chain={launch.chain} address={launch.address} graduated={launch.graduated} />
 			<div className="token-foot">
 				<ChainBadge chain={launch.chain} />
-				{launch.source === 'claude' ? <span className="chip chip-accent">born in claude</span> : null}
+				<OriginChip launch={launch} />
 			</div>
 		</Link>
 	);

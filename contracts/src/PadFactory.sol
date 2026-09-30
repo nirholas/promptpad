@@ -7,6 +7,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PadToken} from "./PadToken.sol";
 import {
@@ -31,7 +33,14 @@ import {
 /// Curve: constant product over virtual reserves. 800M of the 1B supply is sold on the curve;
 /// when the last curve token sells, exactly `targetRaise` ETH has been raised and the pool is
 /// seeded at the curve's final price with the remaining supply (any excess is burned).
-contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
+///
+/// Provenance: every launch records the channel it came through. A launch prepared by the
+/// platform (the site, or an AI agent over MCP) carries an EIP-712 attestation from `attester`
+/// binding the exact token parameters, the creator, and a one-time reference; the contract
+/// verifies it and emits `LaunchOrigin`. Launches without one are recorded as direct. Anyone can
+/// therefore list every prompt-born token from chain data alone, with no trust in the platform's
+/// database: filter `LaunchOrigin` by `channel == CHANNEL_PROMPT`.
+contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver, EIP712 {
     using SafeERC20 for IERC20;
 
     // ---------------------------------------------------------------- constants
@@ -49,6 +58,15 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
     uint16 public constant MAX_TRADE_FEE_BPS = 200;
     uint16 public constant MAX_GRADUATION_FEE_BPS = 1_000;
     uint16 internal constant BPS = 10_000;
+
+    /// @notice Launch channels recorded on-chain.
+    uint8 public constant CHANNEL_DIRECT = 0;
+    uint8 public constant CHANNEL_SITE = 1;
+    uint8 public constant CHANNEL_PROMPT = 2;
+
+    bytes32 public constant LAUNCH_TYPEHASH = keccak256(
+        "Launch(string name,string symbol,string image,string description,address feeRecipient,address creator,uint8 channel,bytes32 ref,uint64 deadline)"
+    );
 
     // ---------------------------------------------------------------- immutables
 
@@ -70,6 +88,8 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
     uint16 public creatorShareBps;
     uint16 public graduationFeeBps;
     bool public launchesPaused;
+    /// @notice Key whose EIP-712 signature marks a launch as prepared through a platform channel.
+    address public attester;
 
     // ---------------------------------------------------------------- state
 
@@ -96,10 +116,25 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         address feeRecipient;
     }
 
+    /// @notice Optional platform attestation. An empty signature means a direct launch.
+    struct Origin {
+        uint8 channel;
+        bytes32 ref;
+        uint64 deadline;
+        bytes signature;
+    }
+
+    struct TokenOrigin {
+        uint8 channel;
+        bytes32 ref;
+    }
+
     mapping(address token => Curve) internal _curves;
     address[] public tokens;
     mapping(address token => uint256) public creatorFeesOwed;
     uint256 public protocolFeesOwed;
+    mapping(address token => TokenOrigin) public origins;
+    mapping(bytes32 ref => bool) public usedRefs;
 
     /// @dev Pool allowed to call `uniswapV3SwapCallback`; set only for the duration of a swap.
     address private _swapPool;
@@ -134,6 +169,8 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         uint256 tokensToLp,
         uint256 tokensBurned
     );
+    event LaunchOrigin(address indexed token, uint8 indexed channel, bytes32 indexed ref);
+    event AttesterUpdated(address attester);
     event CreatorFeesClaimed(address indexed token, address indexed recipient, uint256 amount);
     event LpFeesCollected(address indexed token, uint256 amount0, uint256 amount1);
     event ProtocolFeesWithdrawn(address indexed treasury, uint256 amount);
@@ -160,6 +197,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
     error ZeroAmount();
     error TransferFailed();
     error Unauthorized();
+    error InvalidOrigin();
 
     constructor(
         address owner_,
@@ -171,8 +209,9 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         uint256 launchFee_,
         uint16 tradeFeeBps_,
         uint16 creatorShareBps_,
-        uint16 graduationFeeBps_
-    ) Ownable(owner_) {
+        uint16 graduationFeeBps_,
+        address attester_
+    ) Ownable(owner_) EIP712("PadFactory", "1") {
         if (targetRaise_ == 0) revert InvalidConfig();
         weth = weth_;
         v3Factory = v3Factory_;
@@ -181,6 +220,8 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         virtualEth = (targetRaise_ * (VIRTUAL_TOKEN - CURVE_SUPPLY)) / CURVE_SUPPLY;
         k = virtualEth * VIRTUAL_TOKEN;
         _setConfig(treasury_, launchFee_, tradeFeeBps_, creatorShareBps_, graduationFeeBps_, false);
+        attester = attester_;
+        emit AttesterUpdated(attester_);
     }
 
     receive() external payable {
@@ -191,7 +232,8 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
 
     /// @notice Deploy a token on a fresh curve. `msg.value` pays the launch fee; anything above it
     /// is an initial buy for the caller, executed atomically so nobody can front-run the creator.
-    function createToken(CreateParams calldata p, uint256 minTokensOut)
+    /// `origin` is the platform attestation, or an empty signature for a direct launch.
+    function createToken(CreateParams calldata p, uint256 minTokensOut, Origin calldata origin)
         external
         payable
         nonReentrant
@@ -200,6 +242,7 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         if (launchesPaused) revert LaunchesPaused();
         if (msg.value < launchFee) revert InsufficientPayment();
         _validate(p);
+        TokenOrigin memory recorded = _verifyOrigin(p, origin);
 
         token = address(new PadToken(p.name, p.symbol, p.image, p.description, msg.sender, TOTAL_SUPPLY));
         uint256 index = tokens.length;
@@ -219,7 +262,9 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
             lpTokenId: 0
         });
         protocolFeesOwed += launchFee;
+        origins[token] = recorded;
         emit TokenCreated(token, index, msg.sender, p.feeRecipient, p.name, p.symbol, p.image, p.description);
+        emit LaunchOrigin(token, recorded.channel, recorded.ref);
 
         uint256 initialBuy = msg.value - launchFee;
         if (initialBuy > 0) _buy(token, initialBuy, minTokensOut);
@@ -457,6 +502,13 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         _setConfig(treasury_, launchFee_, tradeFeeBps_, creatorShareBps_, graduationFeeBps_, launchesPaused_);
     }
 
+    /// @notice Rotate (or, with address(0), disable) the platform attestation key. Tokens already
+    /// launched keep the origin they were recorded with.
+    function setAttester(address attester_) external onlyOwner {
+        attester = attester_;
+        emit AttesterUpdated(attester_);
+    }
+
     function _setConfig(
         address treasury_,
         uint256 launchFee_,
@@ -562,6 +614,36 @@ contract PadFactory is Ownable2Step, ReentrancyGuard, IERC721Receiver {
         c = _curves[token];
         if (c.createdAt == 0) revert UnknownToken();
         if (c.graduated) revert AlreadyGraduated();
+    }
+
+    /// @dev A signed origin must come from `attester`, bind these exact parameters and this caller,
+    /// be unexpired, and use a reference that has never launched before.
+    function _verifyOrigin(CreateParams calldata p, Origin calldata o) internal returns (TokenOrigin memory) {
+        if (o.signature.length == 0) return TokenOrigin(CHANNEL_DIRECT, bytes32(0));
+        if (o.channel == CHANNEL_DIRECT || o.channel > CHANNEL_PROMPT) revert InvalidOrigin();
+        if (block.timestamp > o.deadline || usedRefs[o.ref] || attester == address(0)) {
+            revert InvalidOrigin();
+        }
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    LAUNCH_TYPEHASH,
+                    keccak256(bytes(p.name)),
+                    keccak256(bytes(p.symbol)),
+                    keccak256(bytes(p.image)),
+                    keccak256(bytes(p.description)),
+                    p.feeRecipient,
+                    msg.sender,
+                    o.channel,
+                    o.ref,
+                    o.deadline
+                )
+            )
+        );
+        (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, o.signature);
+        if (err != ECDSA.RecoverError.NoError || signer != attester) revert InvalidOrigin();
+        usedRefs[o.ref] = true;
+        return TokenOrigin(o.channel, o.ref);
     }
 
     function _validate(CreateParams calldata p) internal pure {

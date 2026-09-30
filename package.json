@@ -9,7 +9,10 @@
     "lint": "eslint",
     "test": "vitest run",
     "abi": "node scripts/gen-abi.mjs",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && wrangler dev",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -22,8 +25,10 @@
     "@solana/web3.js": "^1.99.0",
     "@tanstack/react-query": "^5.104.0",
     "bn.js": "^5.2.5",
+    "bs58": "^6.0.0",
     "next": "16.3.7",
     "pg": "^8.23.0",
+    "pg-cloudflare": "^1.4.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -32,14 +37,27 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.7",
     "@types/bn.js": "^5.2.0",
     "@types/node": "^24.19.0",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.7",
     "typescript": "^5",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "wrangler": "^4.144.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.4": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260926.1": true,
+    "bigint-buffer": false,
+    "bufferutil": false,
+    "utf-8-validate": false,
+    "unrs-resolver": false
   }
 }

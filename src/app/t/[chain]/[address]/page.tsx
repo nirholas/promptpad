@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 
 import { ChainBadge } from '@/components/ChainBadge';
 import { CopyButton } from '@/components/CopyButton';
+import { OriginChip } from '@/components/OriginChip';
 import { TokenDashboard } from '@/components/TokenDashboard';
 import { TokenLogo } from '@/components/TokenCard';
 import { WalletProviders } from '@/components/WalletProviders';
@@ -62,7 +63,7 @@ export default async function TokenPage(props: PageProps<'/t/[chain]/[address]'>
 						<ChainBadge chain={launch.chain} />
 						<span className="chip mono">{registryNumber(launch.number)}</span>
 						<span className="chip">born {formatDate(launch.createdAt)}</span>
-						{launch.source === 'claude' ? <span className="chip chip-accent">born in claude</span> : null}
+						<OriginChip launch={launch} />
 						{state?.graduated || launch.graduated ? <span className="chip chip-good">graduated</span> : null}
 					</div>
 				</div>

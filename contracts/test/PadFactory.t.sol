@@ -47,10 +47,15 @@ contract PadFactoryForkTest is Test {
     address feeWallet = makeAddr("feeWallet");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
+    address attester;
+    uint256 attesterKey;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("ROBINHOOD_RPC_URL"));
-        factory = new PadFactory(owner, treasury, WETH, V3_FACTORY, NPM, TARGET, LAUNCH_FEE, 100, 5_000, 300);
+        (attester, attesterKey) = makeAddrAndKey("attester");
+        factory = new PadFactory(
+            owner, treasury, WETH, V3_FACTORY, NPM, TARGET, LAUNCH_FEE, 100, 5_000, 300, attester
+        );
         vm.deal(creator, 100 ether);
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
@@ -66,8 +71,128 @@ contract PadFactoryForkTest is Test {
                 description: "fork test",
                 feeRecipient: feeWallet
             }),
-            0
+            0,
+            _direct()
         );
+    }
+
+    function _direct() internal pure returns (PadFactory.Origin memory) {
+        return PadFactory.Origin(0, bytes32(0), 0, "");
+    }
+
+    function _params() internal view returns (PadFactory.CreateParams memory) {
+        return PadFactory.CreateParams(
+            "Prompt Coin", "PRMT", "https://example.org/p.png", "born in chat", feeWallet
+        );
+    }
+
+    function _sign(
+        PadFactory.CreateParams memory p,
+        address who,
+        uint8 channel,
+        bytes32 ref,
+        uint64 deadline,
+        uint256 key
+    ) internal view returns (PadFactory.Origin memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                factory.LAUNCH_TYPEHASH(),
+                keccak256(bytes(p.name)),
+                keccak256(bytes(p.symbol)),
+                keccak256(bytes(p.image)),
+                keccak256(bytes(p.description)),
+                p.feeRecipient,
+                who,
+                channel,
+                ref,
+                deadline
+            )
+        );
+        (, string memory name, string memory version, uint256 chainId, address verifying,,) =
+            factory.eip712Domain();
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                chainId,
+                verifying
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s_) =
+            vm.sign(key, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+        return PadFactory.Origin(channel, ref, deadline, abi.encodePacked(r, s_, v));
+    }
+
+    function test_promptLaunchIsAttestedOnChain() public {
+        PadFactory.CreateParams memory p = _params();
+        bytes32 ref = keccak256("draft-abc123");
+        PadFactory.Origin memory o = _sign(p, creator, 2, ref, uint64(block.timestamp + 1 hours), attesterKey);
+        vm.expectEmit(false, true, true, false);
+        emit PadFactory.LaunchOrigin(address(0), 2, ref);
+        vm.prank(creator);
+        address token = factory.createToken{value: LAUNCH_FEE}(p, 0, o);
+        (uint8 channel, bytes32 recorded) = factory.origins(token);
+        assertEq(channel, 2);
+        assertEq(recorded, ref);
+        assertTrue(factory.usedRefs(ref));
+
+        // The same attestation can never launch a second token.
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(p, 0, o);
+    }
+
+    function test_directLaunchIsRecordedAsDirect() public {
+        address token = _launch(0);
+        (uint8 channel, bytes32 ref) = factory.origins(token);
+        assertEq(channel, 0);
+        assertEq(ref, bytes32(0));
+    }
+
+    function test_forgedOrTamperedOriginsAreRejected() public {
+        PadFactory.CreateParams memory p = _params();
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        (, uint256 mallory) = makeAddrAndKey("mallory");
+
+        // Signed by the wrong key.
+        PadFactory.Origin memory forged = _sign(p, creator, 2, keccak256("x"), deadline, mallory);
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(p, 0, forged);
+
+        // Valid signature, but for a different caller.
+        PadFactory.Origin memory otherCaller = _sign(p, alice, 2, keccak256("y"), deadline, attesterKey);
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(p, 0, otherCaller);
+
+        // Valid signature, parameters changed afterwards.
+        PadFactory.Origin memory o = _sign(p, creator, 2, keccak256("z"), deadline, attesterKey);
+        p.symbol = "SWAP";
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(p, 0, o);
+
+        // Expired.
+        PadFactory.Origin memory late =
+            _sign(_params(), creator, 2, keccak256("w"), uint64(block.timestamp - 1), attesterKey);
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(_params(), 0, late);
+
+        // Only the owner rotates the attester; disabling it rejects every signed origin.
+        vm.expectRevert();
+        factory.setAttester(address(0));
+        vm.prank(owner);
+        factory.setAttester(address(0));
+        PadFactory.Origin memory afterRotation =
+            _sign(_params(), creator, 2, keccak256("v"), deadline, attesterKey);
+        vm.prank(creator);
+        vm.expectRevert(PadFactory.InvalidOrigin.selector);
+        factory.createToken{value: LAUNCH_FEE}(_params(), 0, afterRotation);
     }
 
     function _buy(address who, address token, uint256 amount) internal returns (uint256) {
@@ -96,7 +221,9 @@ contract PadFactoryForkTest is Test {
     function test_createRejectsUnderpayment() public {
         vm.prank(creator);
         vm.expectRevert(PadFactory.InsufficientPayment.selector);
-        factory.createToken{value: LAUNCH_FEE - 1}(PadFactory.CreateParams("A", "A", "", "", feeWallet), 0);
+        factory.createToken{value: LAUNCH_FEE - 1}(
+            PadFactory.CreateParams("A", "A", "", "", feeWallet), 0, _direct()
+        );
     }
 
     function test_initialBuyGoesToCreator() public {
@@ -246,7 +373,9 @@ contract PadFactoryForkTest is Test {
 
         vm.prank(creator);
         vm.expectRevert(PadFactory.LaunchesPaused.selector);
-        factory.createToken{value: 0.001 ether}(PadFactory.CreateParams("A", "A", "", "", feeWallet), 0);
+        factory.createToken{value: 0.001 ether}(
+            PadFactory.CreateParams("A", "A", "", "", feeWallet), 0, _direct()
+        );
     }
 
     function test_existingTokensKeepLaunchTerms() public {

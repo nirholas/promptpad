@@ -13,6 +13,7 @@ import { Connection, Keypair, PublicKey, type Transaction } from '@solana/web3.j
 import BN from 'bn.js';
 
 import { DBC_CONFIG, SITE_URL, SOLANA_RPC_URL } from '../config';
+import { attesters, CHANNELS, MEMO_PROGRAM, ORIGIN_TAG, solanaOriginInstruction } from '../origin';
 import type { Draft, TokenState } from '../types';
 import { SOLANA_ECONOMICS } from './curve-config';
 
@@ -75,11 +76,16 @@ export async function buildLaunchTransaction(draft: Draft, payer: string) {
 		tx.add(transfer);
 	}
 
+	// Provenance: a memo the platform attester must co-sign, in the transaction that creates the pool.
+	const origin = solanaOriginInstruction(draft);
+	if (origin) tx.add(origin.instruction);
+
 	const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 	tx.recentBlockhash = blockhash;
 	tx.lastValidBlockHeight = lastValidBlockHeight;
 	tx.feePayer = payerKey;
 	tx.partialSign(mint);
+	if (origin) tx.partialSign(origin.signer);
 
 	return {
 		transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
@@ -277,4 +283,31 @@ export async function buildCreatorClaimTransaction(mint: string, creator: string
 		maxQuoteAmount: u64Max,
 	});
 	return finalize(tx, creatorKey);
+}
+
+/**
+ * Reads the launch origin straight from chain: the mint's first transaction must carry our memo
+ * with the attester as a signer. Returns null for launches the platform did not attest.
+ */
+export async function readSolanaOrigin(mint: string) {
+	const attester = attesters().solana;
+	if (!attester) return null;
+	const signatures = await connection.getSignaturesForAddress(new PublicKey(mint), { limit: 1000 }, 'confirmed');
+	const first = signatures.at(-1);
+	if (!first) return null;
+	const tx = await connection.getParsedTransaction(first.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+	if (!tx || tx.meta?.err) return null;
+	const signed = new Set(tx.transaction.message.accountKeys.filter((k) => k.signer).map((k) => k.pubkey.toBase58()));
+	if (!signed.has(attester)) return null;
+	for (const ix of tx.transaction.message.instructions) {
+		if (!ix.programId.equals(MEMO_PROGRAM) || !('parsed' in ix) || typeof ix.parsed !== 'string') continue;
+		const [tag, version, channel, draftId] = ix.parsed.split(':');
+		if (tag !== ORIGIN_TAG || version !== 'v1' || !(channel in CHANNELS)) continue;
+		return {
+			channel: CHANNELS[channel as keyof typeof CHANNELS],
+			draftId: draftId ?? null,
+			signature: first.signature,
+		};
+	}
+	return null;
 }

@@ -1,0 +1,23 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	"name": "promptpad",
+	"compatibility_date": "2026-09-01",
+	// global_fetch_strictly_public: server-side fetch() can never reach private addresses, which
+	// backs the logo / metadata SSRF guard in src/lib/net.ts at the platform level.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "promptpad"
+		}
+	],
+	"observability": { "enabled": true }
+	// Postgres: either set the DATABASE_URL secret (Neon or any Postgres reachable over TCP), or bind
+	// Hyperdrive in front of it for pooled, low-latency connections:
+	// "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<wrangler hyperdrive create ... output>" }]
+}

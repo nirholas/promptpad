@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { onWorkers } from './runtime';
+
 /**
  * Postgres when DATABASE_URL is set (production), an embedded file-backed Postgres (PGlite) under
  * `.data/` otherwise, so a fresh clone runs with zero setup. Both speak the same SQL.
@@ -20,6 +22,7 @@ create table if not exists drafts (
 	initial_buy text not null default '0',
 	source text not null,
 	mint text,
+	client text,
 	created_at timestamptz not null default now(),
 	expires_at timestamptz not null,
 	launch_id integer
@@ -41,9 +44,18 @@ create table if not exists launches (
 	draft_id text,
 	source text not null,
 	graduated boolean not null default false,
+	channel smallint not null default 0,
+	attested boolean not null default false,
+	client text,
 	created_at timestamptz not null default now(),
 	unique (chain, address)
 );
+
+alter table drafts add column if not exists client text;
+alter table launches add column if not exists channel smallint not null default 0;
+alter table launches add column if not exists attested boolean not null default false;
+alter table launches add column if not exists client text;
+create index if not exists launches_channel_idx on launches (channel, number desc);
 
 create index if not exists launches_created_idx on launches (created_at desc);
 create index if not exists launches_number_idx on launches (number desc);
@@ -58,7 +70,37 @@ create table if not exists sync_state (
 
 let ready: Promise<Query> | null = null;
 
+
+async function workersConnectionString(): Promise<string | null> {
+	const { getCloudflareContext } = await import('@opennextjs/cloudflare');
+	const { env } = await getCloudflareContext({ async: true });
+	const hyperdrive = (env as { HYPERDRIVE?: { connectionString: string } }).HYPERDRIVE;
+	return hyperdrive?.connectionString ?? process.env.DATABASE_URL ?? null;
+}
+
+/**
+ * Workers cannot share a socket across requests, so each query opens a client (Hyperdrive makes
+ * that cheap). The schema is ensured once per isolate.
+ */
+async function connectWorkers(): Promise<Query> {
+	const { Client } = await import('pg');
+	const connectionString = await workersConnectionString();
+	if (!connectionString) throw new Error('Set DATABASE_URL or bind HYPERDRIVE for the Workers deployment.');
+	const run = async <T extends Row>(text: string, params: unknown[] = []) => {
+		const client = new Client({ connectionString });
+		await client.connect();
+		try {
+			return (await client.query(text, params)).rows as T[];
+		} finally {
+			await client.end().catch(() => undefined);
+		}
+	};
+	await run(SCHEMA);
+	return run;
+}
+
 async function connect(): Promise<Query> {
+	if (onWorkers) return connectWorkers();
 	if (process.env.DATABASE_URL) {
 		const { Pool } = await import('pg');
 		const pool = new Pool({
@@ -71,7 +113,10 @@ async function connect(): Promise<Query> {
 		await pool.query(SCHEMA);
 		return async (text, params = []) => (await pool.query(text, params)).rows;
 	}
-	const { PGlite } = await import('@electric-sql/pglite');
+	// A runtime specifier keeps the embedded database out of the Workers bundle; it only ever runs
+	// in local development and self-hosted Node without DATABASE_URL.
+	const specifier = ['@electric-sql', 'pglite'].join('/');
+	const { PGlite } = (await import(/* webpackIgnore: true */ specifier)) as typeof import('@electric-sql/pglite');
 	const dir = process.env.PGLITE_DIR || './.data/pglite';
 	if (!dir.startsWith('memory://')) {
 		const { mkdirSync } = await import('node:fs');
@@ -79,8 +124,7 @@ async function connect(): Promise<Query> {
 	}
 	const db = await PGlite.create(dir);
 	await db.exec(SCHEMA);
-	return async <T extends Row>(text: string, params: unknown[] = []) =>
-		(await db.query<T>(text, params)).rows;
+	return async <T extends Row>(text: string, params: unknown[] = []) => (await db.query<T>(text, params)).rows;
 }
 
 export async function sql<T extends Row = Row>(text: string, params: unknown[] = []): Promise<T[]> {

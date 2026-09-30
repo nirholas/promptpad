@@ -71,7 +71,7 @@ async function confirmLaunch(draftId: string, body: { txHash?: string; signature
 function walletError(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
 	if (/user rejected|rejected the request|denied|cancel/i.test(message)) return 'You declined in your wallet. Nothing was sent.';
-	if (/insufficient funds|insufficient lamports|0x1\b/i.test(message)) return 'Not enough balance to cover the launch fee, initial buy and gas.';
+	if (/insufficient funds|insufficient lamports|custom program error: 0x1\b/i.test(message)) return 'Not enough balance to cover the launch fee, initial buy and gas.';
 	return message.split('\n')[0].slice(0, 240);
 }
 
@@ -176,12 +176,17 @@ export function LaunchFlow({
 			if (!PAD_FACTORY || !evmClient) throw new Error('Robinhood Chain launches are not configured.');
 			if (evm.chainId !== robinhoodChain.id) await switchChain.mutateAsync({ chainId: robinhoodChain.id });
 			const launchFee = await evmClient.readContract({ address: PAD_FACTORY, abi: padFactoryAbi, functionName: 'launchFee' });
+			if (!evm.address) throw new Error('Connect an EVM wallet first.');
+			const origin = await postJson<{ channel: number; ref: `0x${string}`; deadline: string; signature: `0x${string}` }>(
+				`/api/drafts/${d.id}/origin`,
+				{ creator: evm.address },
+			);
 			const value = launchFee + parseEther(d.initialBuy || '0');
 			const hash = await writeContract.mutateAsync({
 				address: PAD_FACTORY,
 				abi: padFactoryAbi,
 				functionName: 'createToken',
-				args: [{ name: d.name, symbol: d.symbol, image: d.image, description: d.description, feeRecipient: d.feeWallet as `0x${string}` }, BigInt(0)],
+				args: [{ name: d.name, symbol: d.symbol, image: d.image, description: d.description, feeRecipient: d.feeWallet as `0x${string}` }, BigInt(0), { ...origin, deadline: BigInt(origin.deadline) }],
 				value,
 				chainId: robinhoodChain.id,
 			});
@@ -192,7 +197,7 @@ export function LaunchFlow({
 			if (receipt.status !== 'success') throw new Error('The launch transaction reverted on-chain. No token was created.');
 			return confirmLaunch(d.id, { txHash: hash });
 		},
-		[evm.chainId, evmClient, switchChain, writeContract],
+		[evm.address, evm.chainId, evmClient, switchChain, writeContract],
 	);
 
 	const signSolana = useCallback(

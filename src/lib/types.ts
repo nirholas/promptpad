@@ -38,6 +38,12 @@ export type Launch = {
 	tx: string | null;
 	source: 'web' | 'claude' | 'chain';
 	graduated: boolean;
+	/** On-chain launch channel: 0 direct, 1 site, 2 prompt (AI agent over MCP). */
+	channel: number;
+	/** True when the channel is backed by a platform attestation verifiable on-chain. */
+	attested: boolean;
+	/** MCP client that prepared the launch, when known (for example "claude-ai"). */
+	client: string | null;
 	createdAt: string;
 };
 
@@ -52,6 +58,7 @@ export type Draft = {
 	initialBuy: string;
 	source: 'web' | 'claude';
 	mint: string | null;
+	client: string | null;
 	createdAt: string;
 	expiresAt: string;
 	launchId: number | null;

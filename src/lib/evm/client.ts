@@ -21,6 +21,8 @@ function factory(): Address {
 }
 
 export type EvmLaunchEvent = {
+	/** Attested launch channel from `LaunchOrigin`: 0 direct, 1 site, 2 prompt. */
+	channel: number;
 	token: Address;
 	index: number;
 	creator: Address;
@@ -35,13 +37,19 @@ export type EvmLaunchEvent = {
 export async function readLaunchFromTx(hash: Hash): Promise<EvmLaunchEvent | null> {
 	const receipt = await evmClient.getTransactionReceipt({ hash });
 	if (receipt.status !== 'success') return null;
+	let created: Omit<EvmLaunchEvent, 'channel'> | null = null;
+	let channel = 0;
 	for (const log of receipt.logs) {
 		if (log.address.toLowerCase() !== factory().toLowerCase()) continue;
 		try {
 			const event = decodeEventLog({ abi: padFactoryAbi, data: log.data, topics: log.topics });
+			if (event.eventName === 'LaunchOrigin') {
+				channel = Number(event.args.channel);
+				continue;
+			}
 			if (event.eventName !== 'TokenCreated') continue;
 			const a = event.args;
-			return {
+			created = {
 				token: a.token,
 				index: Number(a.index),
 				creator: a.creator,
@@ -55,7 +63,18 @@ export async function readLaunchFromTx(hash: Hash): Promise<EvmLaunchEvent | nul
 			continue;
 		}
 	}
-	return null;
+	return created ? { ...created, channel } : null;
+}
+
+/** The attested channel the factory recorded for a token (0 when launched directly). */
+export async function readEvmOrigin(token: Address) {
+	const [channel, ref] = await evmClient.readContract({
+		address: factory(),
+		abi: padFactoryAbi,
+		functionName: 'origins',
+		args: [token],
+	});
+	return { channel: Number(channel), ref };
 }
 
 export async function readFactoryConfig() {

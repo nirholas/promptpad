@@ -33,6 +33,20 @@ function describeError(error: unknown) {
 	return 'The launch service hit an unexpected error. Try again in a moment.';
 }
 
+/**
+ * Which assistant is calling, from the request's User-Agent. Stored on the draft and shown on the
+ * token ("born in claude"); the on-chain channel records "prompt" regardless of the client.
+ */
+function clientHint(headers: Record<string, string | string[] | undefined> | undefined): string | null {
+	const raw = headers?.['user-agent'];
+	const ua = (Array.isArray(raw) ? raw[0] : raw)?.trim();
+	if (!ua) return null;
+	if (/claude|anthropic/i.test(ua)) return 'claude';
+	if (/chatgpt|openai/i.test(ua)) return 'chatgpt';
+	if (/cursor/i.test(ua)) return 'cursor';
+	return ua.slice(0, 120);
+}
+
 function buildServer(requester: string) {
 	const server = new McpServer({ name: SITE_NAME.toLowerCase(), version: '1.0.0' }, { instructions: INSTRUCTIONS });
 
@@ -58,7 +72,7 @@ function buildServer(requester: string) {
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 		},
-		async (args) => {
+		async (args, extra) => {
 			try {
 				const { draft, checkoutUrl } = await prepareLaunch(
 					{
@@ -72,6 +86,7 @@ function buildServer(requester: string) {
 					},
 					'claude',
 					requester,
+					clientHint(extra.requestInfo?.headers),
 				);
 				const fees = await feeSchedule(draft.chain);
 				const native = nativeSymbol(draft.chain);

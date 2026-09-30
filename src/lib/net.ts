@@ -3,6 +3,8 @@ import 'server-only';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
+import { onWorkers } from './runtime';
+
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
@@ -78,6 +80,10 @@ function totalSize(headers: Headers): number | null {
 
 async function resolvesPublic(hostname: string) {
 	const host = hostname.replace(/^\[|\]$/g, '');
+	if (host === 'localhost' || host.endsWith('.localhost')) return false;
+	// On Workers, global_fetch_strictly_public makes fetch() refuse private addresses at the
+	// platform level after resolution, so only literal IPs need checking here.
+	if (onWorkers) return !isIP(host) || !isPrivate(host);
 	let addresses: string[];
 	if (isIP(host)) addresses = [host];
 	else {

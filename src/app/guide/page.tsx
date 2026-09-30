@@ -22,6 +22,7 @@ const SECTIONS = [
 	['fees', 'fees'],
 	['curve', 'the curve'],
 	['after', 'after launch'],
+	['provenance', 'provenance'],
 	['tools', 'connector tools'],
 	['faq', 'faq'],
 ] as const;
@@ -170,7 +171,20 @@ export default async function GuidePage() {
 					</li>
 				</ul>
 
-				<h2 id="tools">7. connector tools</h2>
+				<h2 id="provenance">7. provenance: born from a prompt</h2>
+				<p>
+					every launch prepared here carries a signature from the platform&apos;s attester key, checked on-chain. on
+					robinhood chain the launch contract verifies it and records the channel (site or prompt) in a{' '}
+					<code>LaunchOrigin</code> event. on solana the pool-creation transaction carries a memo the attester must co-sign.
+					so anyone can list every token born from a prompt from chain data alone, without trusting this site.
+				</p>
+				<p>
+					the <Link href="/registry?origin=prompt">registry filter</Link> and the <a href="/api/launches?origin=prompt">json feed</a>{' '}
+					use it, and <a href="/.well-known/launch-provenance.json">launch-provenance.json</a> publishes the keys and the
+					verification recipe for other indexers.
+				</p>
+
+				<h2 id="tools">8. connector tools</h2>
 				<p>what claude can call through {connectorUrl}:</p>
 				<ul>
 					<li>
@@ -190,7 +204,7 @@ export default async function GuidePage() {
 					</li>
 				</ul>
 
-				<h2 id="faq">8. faq</h2>
+				<h2 id="faq">9. faq</h2>
 			</article>
 			<div style={{ maxWidth: 720 }}>
 				<Faq items={FAQ} />

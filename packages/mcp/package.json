@@ -1,0 +1,25 @@
+{
+  "name": "promptpad-mcp",
+  "version": "0.1.0",
+  "description": "Launch tokens on Robinhood Chain or Solana from any MCP client. Stdio bridge to the promptpad remote MCP server.",
+  "type": "module",
+  "bin": {
+    "promptpad-mcp": "bin/promptpad-mcp.js"
+  },
+  "files": ["bin", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["mcp", "model-context-protocol", "claude", "token-launchpad", "robinhood-chain", "solana", "bonding-curve"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nirholas/promptpad.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/nirholas/promptpad#readme",
+  "mcpName": "io.github.nirholas/promptpad",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0"
+  }
+}

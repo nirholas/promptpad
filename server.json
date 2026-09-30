@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nirholas/promptpad",
+  "title": "promptpad",
+  "description": "Launch tokens on Robinhood Chain or Solana from a prompt; the user signs and pays at a checkout link.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/nirholas/promptpad",
+    "source": "github",
+    "subfolder": "packages/mcp"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "promptpad-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "PROMPTPAD_URL",
+          "description": "Launchpad MCP endpoint. Defaults to the production server.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

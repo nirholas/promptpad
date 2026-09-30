@@ -1,4 +1,4 @@
-import { VersionedTransaction } from '@solana/web3.js';
+import { Keypair, VersionedTransaction } from '@solana/web3.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Draft } from '@/lib/types';
@@ -12,6 +12,8 @@ const payer = process.env.SOLANA_SIM_PAYER;
 describe.skipIf(!config || !payer)('Solana launch transaction (mainnet simulation)', () => {
 	it('creates the pool, bundles the first buy and hands creator rights to the fee wallet', async () => {
 		vi.stubEnv('NEXT_PUBLIC_DBC_CONFIG', config!);
+		const attester = Keypair.generate();
+		vi.stubEnv('ATTESTER_SOLANA_SECRET', JSON.stringify(Array.from(attester.secretKey)));
 		vi.stubEnv('NEXT_PUBLIC_SOLANA_RPC_URL', process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com');
 		vi.resetModules();
 		const { buildLaunchTransaction, connection } = await import('@/lib/solana/dbc');
@@ -25,8 +27,9 @@ describe.skipIf(!config || !payer)('Solana launch transaction (mainnet simulatio
 			description: 'simulated only',
 			feeWallet: 'JBuNetso3yM9Ktwxn3RpoguRkx8QjnDov1tY7Zh9Wgwm',
 			initialBuy: '0.01',
-			source: 'web',
+			source: 'claude',
 			mint: null,
+			client: null,
 			createdAt: new Date().toISOString(),
 			expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 			launchId: null,
@@ -45,5 +48,8 @@ describe.skipIf(!config || !payer)('Solana launch transaction (mainnet simulatio
 		expect(sim.value.err).toBeNull();
 		expect(sim.value.logs?.some((l) => l.includes('Instruction: TransferPoolCreator'))).toBe(true);
 		expect(sim.value.logs?.some((l) => /Instruction: Swap/.test(l))).toBe(true);
+		// Provenance memo, co-signed by the attester, rides in the same transaction.
+		expect(sim.value.logs?.some((l) => l.includes('Memo') && l.includes(':v1:prompt:simulation01'))).toBe(true);
+		expect(tx.signatures.some((s) => s.publicKey.equals(attester.publicKey) && s.signature !== null)).toBe(true);
 	});
 });

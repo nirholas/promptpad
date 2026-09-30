@@ -1,0 +1,5 @@
+# Secrets for `wrangler dev` (copy to .dev.vars). In production set them with `wrangler secret put`.
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+# Launch provenance signers. The EVM address must match the factory's attester.
+ATTESTER_PRIVATE_KEY=
+ATTESTER_SOLANA_SECRET=

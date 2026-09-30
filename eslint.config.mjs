@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // Foundry project: Solidity plus vendored submodules.
     "contracts/**",
     ".data/**",
+    // Build output.
+    ".open-next/**",
+    ".wrangler/**",
   ]),
 ]);
 
