@@ -23,7 +23,7 @@ export const FAQ: FaqItem[] = [
 	},
 	{
 		q: 'can the liquidity be pulled?',
-		a: 'no. on robinhood chain the uniswap position is minted to the launch contract, which has no function to withdraw it. on solana the lp is permanently locked by meteora at migration.',
+		a: 'no. on robinhood chain the uniswap position is minted to the launch contract, which has no function to withdraw it. on solana the coin graduates on pump.fun, which locks its liquidity in PumpSwap.',
 	},
 	{
 		q: 'robinhood chain or solana?',

@@ -7,7 +7,7 @@ import { chainEnabled, DRAFT_TTL_HOURS, PAD_FACTORY, type ChainKey } from './con
 import { sql } from './db';
 import { readEvmOrigin, readEvmTokenState, readFactoryConfig, readFactoryTokens, readLaunchFromTx, readTokenMetadata } from './evm/client';
 import { publicFetch } from './net';
-import { findPoolByMint, listConfigPools, readMintMetadata, readSolanaOrigin } from './solana/dbc';
+import { listAttestedLaunches, readOriginFromTransaction, readPumpMetadata, verifyPumpLaunch } from './solana/pump';
 import type { Draft, Launch } from './types';
 import type { LaunchInput } from './validate';
 
@@ -275,30 +275,37 @@ export async function recordEvmLaunch(txHash: string, draftId: string | null): P
 	});
 }
 
-/** Confirms the draft's Solana pool exists under our partner config, then records it. */
+/**
+ * Confirms the draft's pump.fun coin exists with the platform fee split written, then records it.
+ * `signature` is the launch bundle's second transaction, which carries the attested memo.
+ */
 export async function recordSolanaLaunch(draftId: string, signature: string | null): Promise<Launch> {
 	const draft = await getDraft(draftId);
 	if (!draft || draft.chain !== 'solana') throw new LaunchError('Unknown Solana launch draft.', 404);
 	if (!draft.mint) throw new LaunchError('This draft has no launch transaction yet.', 409);
-	const found = await findPoolByMint(draft.mint);
-	if (!found) throw new LaunchError('The pool is not on-chain yet. It may still be confirming.', 404);
-	const origin = await readSolanaOrigin(draft.mint).catch(() => null);
+	const verified = await verifyPumpLaunch(draft, draft.mint);
+	if (!verified) throw new LaunchError('The coin is not on-chain yet. It may still be confirming.', 404);
+	if (!verified.split) {
+		throw new LaunchError('The coin exists but its fee split is not written yet. Reopen the checkout to finish it.', 409);
+	}
+	const origin = signature ? await readOriginFromTransaction(signature).catch(() => null) : null;
+	const attested = origin && origin.mint === draft.mint ? origin : null;
 
 	return insertLaunch({
 		chain: 'solana',
 		address: draft.mint,
-		pool: found.publicKey.toBase58(),
+		pool: null,
 		name: draft.name,
 		symbol: draft.symbol,
 		image: draft.image,
 		description: draft.description,
-		creator: found.account.poolState.creator.toBase58(),
+		creator: verified.curve.creator.toBase58(),
 		feeWallet: draft.feeWallet,
-		tx: signature ?? origin?.signature ?? null,
-		source: sourceFor(origin?.channel ?? 0, draft.source),
-		graduated: false,
-		channel: origin?.channel ?? 0,
-		attested: Boolean(origin),
+		tx: signature,
+		source: sourceFor(attested?.channel ?? 0, draft.source),
+		graduated: verified.curve.complete,
+		channel: attested?.channel ?? 0,
+		attested: Boolean(attested),
 		client: draft.client,
 		draftId,
 	});
@@ -448,45 +455,57 @@ async function syncEvm() {
 	}
 }
 
+/**
+ * Solana launches are indexed from the attester's own transaction history: every launch this
+ * platform prepared carries a memo it co-signed, so the chain itself is the registry.
+ */
 async function syncSolana() {
-	const pools = await listConfigPools();
-	const known = new Set(
-		(await sql<{ address: string }>(`select address from launches where chain = 'solana'`)).map((r) => r.address),
-	);
-	for (const p of pools) {
-		if (known.has(p.mint)) {
-			if (p.migrated) await markGraduated('solana', p.mint, p.pool);
+	const cursorRow = await sql<{ value: string }>(`select value from sync_state where key = 'sol_attester_cursor'`);
+	const { launches, newest } = await listAttestedLaunches(cursorRow[0]?.value || undefined);
+	for (const origin of launches.reverse()) {
+		if (await getLaunch('solana', origin.mint)) continue;
+		const draft = origin.draftId ? await getDraft(origin.draftId) : null;
+		if (draft && draft.mint === origin.mint) {
+			await recordSolanaLaunch(draft.id, origin.signature).catch((error) => console.error('solana sync', error));
 			continue;
 		}
-		const draft = await sql<DraftRow>(`select * from drafts where chain = 'solana' and mint = $1`, [p.mint]);
-		if (draft[0]) {
-			await recordSolanaLaunch(draft[0].id, null);
-			continue;
-		}
-		const [meta, origin] = await Promise.all([
-			readMintMetadata(p.mint),
-			readSolanaOrigin(p.mint).catch(() => null),
-		]);
+		const meta = await readPumpMetadata(origin.mint);
 		if (!meta) continue;
 		const offchain = await fetchOffchainMetadata(meta.uri);
 		await insertLaunch({
 			chain: 'solana',
-			address: p.mint,
-			pool: p.pool,
+			address: origin.mint,
+			pool: null,
 			name: meta.name,
 			symbol: meta.symbol,
 			image: offchain.image,
 			description: offchain.description,
-			creator: p.creator,
-			feeWallet: p.creator,
-			tx: origin?.signature ?? null,
-			source: sourceFor(origin?.channel ?? 0, null),
-			graduated: p.migrated,
-			channel: origin?.channel ?? 0,
-			attested: Boolean(origin),
+			creator: '',
+			feeWallet: '',
+			tx: origin.signature,
+			source: sourceFor(origin.channel, null),
+			graduated: false,
+			channel: origin.channel,
+			attested: true,
 			client: null,
-			createdAt: p.activation > 1_000_000_000 ? new Date(p.activation * 1000).toISOString() : undefined,
+			createdAt: origin.blockTime ? new Date(origin.blockTime * 1000).toISOString() : undefined,
 		});
+	}
+	if (newest) {
+		await sql(
+			`insert into sync_state (key, value, updated_at) values ('sol_attester_cursor', $1, $2)
+			 on conflict (key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+			[newest, new Date().toISOString()],
+		);
+	}
+	const open = await sql<{ address: string }>(
+		`select address from launches where chain = 'solana' and not graduated order by id desc limit 50`,
+	);
+	if (open.length) {
+		const { pumpProgressMany } = await import('./solana/pump');
+		for (const p of await pumpProgressMany(open.map((o) => o.address))) {
+			if (p.graduated) await markGraduated('solana', p.address, null);
+		}
 	}
 }
 

@@ -4,16 +4,16 @@ Launch a token from a prompt. Tell Claude (through a remote MCP connector) or fi
 
 The economics, identical in shape on both chains:
 
-| | Robinhood Chain (own contracts) | Solana (Meteora DBC partner config) |
+| | Robinhood Chain (own contracts) | Solana (pump.fun) |
 |---|---|---|
-| Launch fee | 0.0005 ETH | 0.01 SOL (Meteora keeps 10%) |
-| Trade fee | 1% on curve and pool | 1% on curve and pool |
-| Split | 70% creator / 30% platform | 70% creator / 30% platform of the partner share, after Meteora's fixed 20% protocol cut |
-| Graduation | 4.2 ETH, no fee; the whole raise goes into the pool | 85 SOL, no fee |
-| Liquidity | Uniswap v3 position held by the factory forever | DAMM v2 LP permanently locked, 70 / 30 |
-| Anti-snipe | 99% buy tax falling to 0 over 5s | 99% fee decaying to 1% over 5s |
+| Launch fee | 0.0005 ETH | 0.01 SOL |
+| Trade fee | 1% on curve and pool | pump.fun's fee schedule (read live) |
+| Creator / platform | 70% / 30% of the trade fee | 70% / 30% of pump.fun's creator fee, via a fee-sharing config locked at launch |
+| Graduation | 4.2 ETH, no fee; the whole raise goes into the pool | pump.fun's curve target, into PumpSwap |
+| Liquidity | Uniswap v3 position held by the factory forever | locked by pump.fun at graduation |
+| Anti-snipe | 99% buy tax falling to 0 over 5s | the creator's first buy lands in the same atomic bundle as the coin |
 
-No wallet is ever exempt from the anti-snipe tax. The only untaxed buy is the creator's initial buy executed atomically inside the launch transaction, where nobody can front-run it anyway. Wallet exemptions are how snipe taxes get gamed, so there are none.
+On Robinhood Chain no wallet is ever exempt from the anti-snipe tax; the only untaxed buy is the creator's initial buy executed atomically inside the launch transaction. Wallet exemptions are how snipe taxes get gamed, so there are none.
 
 All Robinhood Chain values are constructor/owner settings with hard caps in the contract (trade fee at most 2%, launch fee at most 0.05 ETH, graduation fee at most 10%) and are snapshotted per token at launch. All Solana values live in [`src/lib/solana/curve-config.ts`](src/lib/solana/curve-config.ts), which is exactly what the config script writes on-chain.
 
@@ -24,8 +24,8 @@ Claude ──MCP──▶ /mcp  launch_token ─┐
                                      ├─▶ draft (validated, 24h) ─▶ /launch/<id> checkout ─▶ wallet signs
 Site form ───▶ POST /api/drafts ─────┘                                                        │
                                                                                                ▼
-                    Robinhood Chain: PadFactory.createToken      Solana: DBC createPool + first buy
-                                                                         + transfer creator to fee wallet
+                    Robinhood Chain: PadFactory.createToken      Solana: Jito bundle [pump.fun create + first buy]
+                                                                         [launch fee + locked fee split + memo + tip]
                                                                                                │
                   POST /api/drafts/<id>/confirm  ◀── verified on-chain before it enters the registry
 ```
@@ -39,8 +39,8 @@ Site form ───▶ POST /api/drafts ─────┘                      
 Every launch the platform prepares is attested, so "launched from a prompt in Claude" is provable from chain data alone. It does not depend on our database.
 
 - **Robinhood Chain.** The site signs an EIP-712 `Launch` message (exact name, ticker, logo, description, fee wallet, the sending wallet, channel, a one-time reference and a deadline) with the attester key. `PadFactory` verifies it and emits `LaunchOrigin(token, channel, ref)`, with channel `1` for the site and `2` for a prompt. Forged, replayed, expired or altered attestations revert. A direct contract call without one is recorded as channel `0`.
-- **Solana.** The pool-creation transaction carries a Memo `<tag>:v1:<site|prompt>:<draftId>` whose required signer is the attester. The mint keypair signs only that exact transaction, so the attestation cannot be moved onto another token.
-- **Aggregating.** `GET /api/launches?origin=prompt` is the feed, and the registry page has a "born from a prompt" filter. `/.well-known/launch-provenance.json` publishes the attester keys, contract and config addresses, and the recipe any indexer can follow without our API: filter `LaunchOrigin` logs by `channel == 2`, or read each DBC mint's first transaction for the signed memo. The MCP client that prepared a launch (for example Claude) is also recorded from its User-Agent and shown as "born in claude".
+- **Solana.** The launch bundle carries a Memo `<tag>:v1:<site|prompt>:<draftId>:<mint>` whose required signer is the attester, in the transaction that writes that coin's fee split, so it cannot be moved onto another coin. The attester's own transaction history is therefore a complete, database-free index of every Solana launch.
+- **Aggregating.** `GET /api/launches?origin=prompt` is the feed, and the registry page has a "born from a prompt" filter. `/.well-known/launch-provenance.json` publishes the attester keys, contract and config addresses, and the recipe any indexer can follow without our API: filter `LaunchOrigin` logs by `channel == 2`, or read the Solana attester's transaction history for the signed memos. The MCP client that prepared a launch (for example Claude) is also recorded from its User-Agent and shown as "born in claude".
 
 ### Robinhood Chain contracts ([`contracts/`](contracts))
 
@@ -48,13 +48,20 @@ Every launch the platform prepares is attested, so "launched from a prompt in Cl
 - `PadFactory`: constant-product curve over virtual reserves. 800M tokens sell on the curve, and the curve sells out at exactly `targetRaise`. The graduating buy is capped and the excess refunded. In the same transaction it creates or repairs the WETH/token 1% Uniswap v3 pool at the curve's final price, including a price-limited correction swap if someone pre-created the pool at a wrong price. It then mints a full-range position the factory can never withdraw and burns the unused reserve. `collectLpFees` splits pool fees afterwards. Sellers need no approval.
 - Verified against the live Uniswap v3 deployment on chain 4663 (factory `0x1f7d…2EfA`, position manager `0x7399…E0D3`, WETH `0x0Bd7…AD73`).
 
-### Solana
+### Solana (pump.fun)
 
-A Meteora Dynamic Bonding Curve **partner config** holds all economics. Every launch creates a pool under it with the launcher as payer. An optional first buy is bundled at the minimum fee, and creator rights move to the chosen fee wallet in the same transaction. Token metadata JSON is served by `/api/metadata/<draftId>`.
+Coins are created on pump.fun's own bonding curve, so they appear on pump.fun and in every Solana terminal from the first second, and graduate to PumpSwap on pump.fun's terms. Revenue comes from pump.fun's creator-fee sharing: at launch the creator's fee stream is split 70% to the chosen fee wallet and 30% to the platform treasury, and pump.fun locks that split permanently once written.
+
+A launch is two transactions (a single one exceeds Solana's 1232-byte packet limit) sent as one atomic Jito bundle:
+
+1. create the coin + the creator's first buy (so nobody buys before the creator)
+2. launch fee + fee-sharing config + locked 70/30 split + attester-signed provenance memo + Jito tip
+
+They land together or not at all. If the block engine is unreachable, the site sends the same signed transactions in order through the RPC, and a coin whose split was not written can be finished from its checkout link (only the second transaction is rebuilt). The mint keypair signs only the first transaction and the attester only the second, both server-side, so neither can be altered. Coin metadata JSON is served at `/m/<draftId>`. There is no on-chain setup: setting `NEXT_PUBLIC_SOLANA_TREASURY` opens the lane.
 
 ## Stack
 
-Next.js 16 (App Router) · viem + wagmi v3 (any EIP-6963 wallet) · Solana wallet adapter (any Wallet Standard wallet) · `@meteora-ag/dynamic-bonding-curve-sdk` · `@modelcontextprotocol/sdk` (stateless Streamable HTTP) · Postgres (or embedded PGlite with zero setup) · Foundry.
+Next.js 16 (App Router) · viem + wagmi v3 (any EIP-6963 wallet) · Solana wallet adapter (any Wallet Standard wallet) · `@pump-fun/pump-sdk` + Jito bundles · `@modelcontextprotocol/sdk` (stateless Streamable HTTP) · Postgres (or embedded PGlite with zero setup) · Foundry.
 
 ## Run locally
 
@@ -81,7 +88,7 @@ cd contracts && PAD_OWNER=<addr> PAD_TREASURY=<addr> \
 ```bash
 npm test                                                   # unit + integration (PGlite, validation, SSRF guard)
 cd contracts && ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com forge test   # fork tests on real Uniswap v3
-SOLANA_SIM_CONFIG=<any SOL-quoted DBC config> SOLANA_SIM_PAYER=<funded address> npm test   # simulates a real launch tx on mainnet, sends nothing
+PUMP_SIM_PAYER=<funded address> npm test   # builds and simulates the real pump.fun launch bundle on mainnet, sends nothing
 npm run typecheck && npm run lint
 ```
 
@@ -96,32 +103,27 @@ These steps spend real funds and are run by the owner.
      forge script script/Deploy.s.sol --rpc-url https://rpc.mainnet.chain.robinhood.com --account <keystore> --broadcast
    ```
    Set `NEXT_PUBLIC_PAD_FACTORY` to the printed address. To override defaults, set `PAD_LAUNCH_FEE_WEI`, `PAD_TRADE_FEE_BPS`, `PAD_CREATOR_SHARE_BPS`, `PAD_GRADUATION_FEE_BPS` and `PAD_TARGET_RAISE_WEI`.
-2. **Solana partner config.** Dry-run first (simulated against the live program, sends nothing), then create it:
-   ```bash
-   SOLANA_RPC_URL=<rpc> SOLANA_PARTNER_KEYPAIR=<keypair.json> node scripts/solana-create-config.ts
-   SOLANA_RPC_URL=<rpc> SOLANA_PARTNER_KEYPAIR=<keypair.json> node scripts/solana-create-config.ts --send
-   ```
-   Set `NEXT_PUBLIC_DBC_CONFIG` to the printed address. The keypair becomes the fee claimer (override with `SOLANA_FEE_CLAIMER`).
+2. **Solana.** No on-chain setup. Set `NEXT_PUBLIC_SOLANA_TREASURY` to the wallet that should receive the launch fee and the platform's 30% of creator fees (and optionally `NEXT_PUBLIC_SOLANA_LAUNCH_FEE_SOL`, default 0.01).
 3. **Attester keys.** Generate one EVM key and one Solana key. Keep them as secrets (`ATTESTER_PRIVATE_KEY`, `ATTESTER_SOLANA_SECRET`), and pass the EVM address as `PAD_ATTESTER` when deploying the factory (or call `setAttester` later).
 4. **Hosting on Cloudflare Workers** (via OpenNext; the bundle is about 5.4 MB gzipped, so it needs the Workers Paid plan):
    ```bash
-   # Postgres: Neon (or any Postgres), optionally fronted by Hyperdrive (see wrangler.jsonc)
-   npx wrangler secret put DATABASE_URL
+   # Data lives in D1 (wrangler.jsonc binds it; apply migrations/d1 once):
+   npx wrangler d1 migrations apply promptpad --remote
    npx wrangler secret put ATTESTER_PRIVATE_KEY
    npx wrangler secret put ATTESTER_SOLANA_SECRET
-   NEXT_PUBLIC_SITE_URL=https://<domain> NEXT_PUBLIC_PAD_FACTORY=... NEXT_PUBLIC_DBC_CONFIG=... \
+   NEXT_PUBLIC_SITE_URL=https://<domain> NEXT_PUBLIC_PAD_FACTORY=... NEXT_PUBLIC_SOLANA_TREASURY=... \
      NEXT_PUBLIC_SOLANA_RPC_URL=... npm run cf:deploy
    ```
-   `NEXT_PUBLIC_*` values are baked in at build time; `NEXT_PUBLIC_SITE_URL` also goes into Solana metadata URIs and the connector URL. `npm run cf:preview` runs the production build locally in workerd. Any Node host works as well (`npm run build && npm start`); without `DATABASE_URL` it falls back to embedded PGlite. Use dedicated RPC URLs: `SOLANA_RPC_URL` must allow `getProgramAccounts` for registry backfill, and the public endpoints rate-limit hard.
+   `NEXT_PUBLIC_*` values are baked in at build time; `NEXT_PUBLIC_SITE_URL` also goes into Solana metadata URIs and the connector URL. `npm run cf:preview` runs the production build locally in workerd. Any Node host works as well (`npm run build && npm start`); without `DATABASE_URL` it falls back to embedded PGlite. Use dedicated RPC URLs: the public endpoints rate-limit hard.
 
 ## Collecting revenue
 
 - **Robinhood Chain.** Launch fees, the platform share of trade fees, graduation fees and leftovers accrue in the factory. Anyone can send them to the treasury:
   `cast send <factory> "withdrawProtocolFees()" --rpc-url https://rpc.mainnet.chain.robinhood.com --account <keystore>`.
   Pool fees on graduated tokens: `collectLpFees(token)`, also callable from each token page. The treasury share goes straight to the treasury.
-- **Solana.** Report, then claim trading fees, launch fees and migration fees across every pool:
+- **Solana.** The launch fee arrives in the treasury inside each launch bundle. Creator fees are paid out by a permissionless payout that sends 70% to the fee wallet and 30% to the treasury; token pages have a button for it, and this pays out every launch at once:
   ```bash
-  NEXT_PUBLIC_DBC_CONFIG=<config> SOLANA_PARTNER_KEYPAIR=<fee claimer> node scripts/solana-claim-partner-fees.ts [--send]
+  SITE=https://<domain> SOLANA_KEYPAIR=<any funded keypair> node scripts/solana-payout-all.ts [--send]
   ```
 
 ## Claude connector and npm package

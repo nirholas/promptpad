@@ -1,4 +1,4 @@
-import { DBC_CONFIG, PAD_FACTORY, robinhoodChain, SITE_NAME, SITE_URL, SOLANA_CLUSTER } from '@/lib/config';
+import { PAD_FACTORY, robinhoodChain, SITE_NAME, SITE_URL, SOLANA_CLUSTER, SOLANA_TREASURY } from '@/lib/config';
 import { json } from '@/lib/http';
 import { attesters, CHANNELS, MEMO_PROGRAM, ORIGIN_TAG } from '@/lib/origin';
 
@@ -23,12 +23,13 @@ export function GET() {
 			},
 			solana: {
 				cluster: SOLANA_CLUSTER,
-				dbcConfig: DBC_CONFIG,
+				venue: 'pump.fun',
+				treasury: SOLANA_TREASURY,
 				attester: keys.solana,
 				memoProgram: MEMO_PROGRAM.toBase58(),
-				memoFormat: `${ORIGIN_TAG}:v1:<site|prompt>:<draftId>`,
+				memoFormat: `${ORIGIN_TAG}:v1:<site|prompt>:<draftId>:<mint>`,
 				verify:
-					'For each pool under dbcConfig, read the base mint’s first transaction. It is attested when it contains a Memo instruction in memoFormat whose signer is `attester`; the mint keypair signs only that transaction, so it cannot be replayed onto another token.',
+					'Read the attester address history: each launch bundle includes a Memo in memoFormat signed by `attester`, next to the coin\'s locked pump.fun fee split (70% fee wallet / 30% treasury). A memo cannot be moved to another coin, because the attester signature covers the transaction that writes that coin\'s split.',
 			},
 		},
 		{ headers: { 'cache-control': 'public, max-age=300', 'access-control-allow-origin': '*' } },

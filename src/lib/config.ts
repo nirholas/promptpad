@@ -70,8 +70,12 @@ export const SOLANA_RPC_URL =
 	process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
 	(SOLANA_CLUSTER === 'devnet' ? 'https://api.devnet.solana.com' : 'https://api.mainnet-beta.solana.com');
 
-const dbcConfig = process.env.NEXT_PUBLIC_DBC_CONFIG || '';
-export const DBC_CONFIG: string | null = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(dbcConfig) ? dbcConfig : null;
+/** Platform wallet that receives the Solana launch fee and the platform share of creator fees. */
+const solanaTreasury = process.env.NEXT_PUBLIC_SOLANA_TREASURY || '';
+export const SOLANA_TREASURY: string | null = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(solanaTreasury) ? solanaTreasury : null;
+
+/** Flat SOL launch fee, paid inside the launch bundle. */
+export const SOLANA_LAUNCH_FEE_SOL = Number(process.env.NEXT_PUBLIC_SOLANA_LAUNCH_FEE_SOL ?? '0.01');
 
 export function solanaExplorer(kind: 'tx' | 'address' | 'token', value: string) {
 	const path = kind === 'tx' ? 'tx' : kind === 'token' ? 'token' : 'account';
@@ -96,5 +100,5 @@ export function explorer(chain: ChainKey, kind: 'tx' | 'address' | 'token', valu
 }
 
 export function chainEnabled(chain: ChainKey) {
-	return chain === 'robinhood' ? PAD_FACTORY !== null : DBC_CONFIG !== null;
+	return chain === 'robinhood' ? PAD_FACTORY !== null : SOLANA_TREASURY !== null;
 }

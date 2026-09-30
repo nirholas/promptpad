@@ -1,6 +1,6 @@
 import { errorResponse, json } from '@/lib/http';
 import { LaunchError } from '@/lib/launches';
-import { buildSwapTransaction, quoteSwap } from '@/lib/solana/dbc';
+import { buildSwapTransaction, quoteSwap } from '@/lib/solana/pump';
 import { isSolanaAddress } from '@/lib/validate';
 
 type Body = { mint?: string; owner?: string; side?: string; amount?: number | string; slippageBps?: number; quoteOnly?: boolean };
@@ -17,7 +17,7 @@ export async function POST(req: Request) {
 		if (!Number.isFinite(amount) || amount <= 0) throw new LaunchError('Enter an amount above zero.');
 
 		if (body.quoteOnly) {
-			const quote = await quoteSwap(body.mint, side, amount, slippageBps).catch((e: Error) => {
+			const quote = await quoteSwap(body.mint, side, amount).catch((e: Error) => {
 				throw new LaunchError(e.message);
 			});
 			return json({ quote: quote.display });

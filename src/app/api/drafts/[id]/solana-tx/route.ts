@@ -1,8 +1,9 @@
 import { errorResponse, json } from '@/lib/http';
 import { draftExpired, getDraft, LaunchError, setDraftMint } from '@/lib/launches';
-import { buildLaunchTransaction } from '@/lib/solana/dbc';
+import { buildLaunchBundle } from '@/lib/solana/pump';
 import { isSolanaAddress } from '@/lib/validate';
 
+/** The launch bundle (create + first buy, then fee + split + memo + tip) for the payer to sign. */
 export async function POST(req: Request, ctx: RouteContext<'/api/drafts/[id]/solana-tx'>) {
 	try {
 		const { id } = await ctx.params;
@@ -12,9 +13,11 @@ export async function POST(req: Request, ctx: RouteContext<'/api/drafts/[id]/sol
 		const draft = await getDraft(id);
 		if (!draft || draft.chain !== 'solana') throw new LaunchError('No Solana launch draft with that id.', 404);
 		if (draft.launchId) throw new LaunchError('This token has already launched.', 409);
-		if (draftExpired(draft)) throw new LaunchError('This launch preview has expired. Prepare a new one.', 410);
+		if (draftExpired(draft) && !draft.mint) throw new LaunchError('This launch preview has expired. Prepare a new one.', 410);
 
-		const built = await buildLaunchTransaction(draft, payer);
+		const built = await buildLaunchBundle(draft, payer, draft.mint).catch((e: Error) => {
+			throw new LaunchError(e.message);
+		});
 		await setDraftMint(draft.id, built.mint);
 		return json(built);
 	} catch (error) {

@@ -2,11 +2,10 @@ import 'server-only';
 
 import { formatEther, type Address } from 'viem';
 
-import { chainEnabled, isChainKey, type ChainKey } from './config';
+import { chainEnabled, isChainKey, SOLANA_LAUNCH_FEE_SOL, type ChainKey } from './config';
 import { evmProgressMany, readEvmTokenState, readFactoryConfig } from './evm/client';
 import { markGraduated } from './launches';
-import { SOLANA_ECONOMICS } from './solana/curve-config';
-import { poolConfig, readSolanaTokenState, solanaProgressMany } from './solana/dbc';
+import { CREATOR_SHARE_BPS, pumpFeeTerms, pumpProgressMany, readPumpTokenState } from './solana/pump';
 import type { TokenState } from './types';
 
 export type FeeSchedule = {
@@ -41,21 +40,20 @@ export async function feeSchedule(chain: ChainKey): Promise<FeeSchedule | null> 
 			launchesPaused: c.launchesPaused,
 		};
 	}
-	// Terms come from the partner config account on-chain; the fee curve's shape (anti-snipe window,
-	// steady-state rate) is what scripts/solana-create-config.ts encoded into it.
-	const c = await poolConfig();
-	const e = SOLANA_ECONOMICS;
+	// Terms come live from pump.fun's global fee config; the creator fee is split 70 / 30 between the
+	// launch's fee wallet and the platform by a fee-sharing config that is locked at launch.
+	const t = await pumpFeeTerms();
 	return {
 		chain,
 		live: true,
-		launchFee: Number(c.poolCreationFee.toString()) / 1e9,
-		tradeFeeBps: e.tradeFeeBps,
-		creatorShareBps: c.creatorTradingFeePercentage * 100,
-		graduationFeeBps: c.migrationFeePercentage * 100,
-		graduationTarget: Math.round(Number(c.migrationQuoteThreshold.toString()) / 1e7) / 100,
-		graduatesTo: 'Meteora DAMM v2',
-		antiSnipe: { startBps: e.antiSnipeStartBps, seconds: e.antiSnipeSeconds },
-		lpTerms: `LP is permanently locked, ${c.creatorPermanentLockedLiquidityPercentage}% to the creator and ${c.partnerPermanentLockedLiquidityPercentage}% to the protocol; each side claims its own pool fees. Meteora keeps ${e.meteoraProtocolFeePercentage}% of every trade fee before the split.`,
+		launchFee: SOLANA_LAUNCH_FEE_SOL,
+		tradeFeeBps: t.totalBps,
+		creatorShareBps: t.totalBps ? Math.round((t.creatorBps * CREATOR_SHARE_BPS) / t.totalBps) : 0,
+		graduationFeeBps: 0,
+		graduationTarget: Math.round(t.graduationTargetSol * 100) / 100,
+		graduatesTo: 'PumpSwap',
+		antiSnipe: null,
+		lpTerms: `Trades on pump.fun's bonding curve, then PumpSwap. Of the ${t.totalBps / 100}% trade fee, pump.fun keeps ${t.protocolBps / 100}% and the ${t.creatorBps / 100}% creator fee is split 70% to the fee wallet and 30% to the platform, locked at launch. The creator's first buy lands in the same atomic bundle as the coin, so nobody can buy before them.`,
 		launchesPaused: false,
 	};
 }
@@ -83,7 +81,7 @@ export async function readTokenState(chain: string, address: string): Promise<To
 
 	const value = (async () => {
 		const state =
-			chain === 'robinhood' ? await readEvmTokenState(address as Address) : await readSolanaTokenState(address);
+			chain === 'robinhood' ? await readEvmTokenState(address as Address) : await readPumpTokenState(address);
 		if (state?.graduated) await markGraduated(chain, address, chain === 'robinhood' ? state.pool : null);
 		return state;
 	})();
@@ -97,5 +95,5 @@ export async function readTokenState(chain: string, address: string): Promise<To
 
 export async function readProgressMany(chain: ChainKey, addresses: string[]) {
 	if (!chainEnabled(chain) || !addresses.length) return [];
-	return chain === 'robinhood' ? evmProgressMany(addresses as Address[]) : solanaProgressMany(addresses);
+	return chain === 'robinhood' ? evmProgressMany(addresses as Address[]) : pumpProgressMany(addresses);
 }

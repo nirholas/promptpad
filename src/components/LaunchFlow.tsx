@@ -2,13 +2,14 @@
 
 import { useConnection as useSolanaConnection, useWallet } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
+import bs58 from 'bs58';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseEther } from 'viem';
 import { useConnection, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 
 import { chainLabel, explorer, nativeSymbol, PAD_FACTORY, robinhoodChain, type ChainKey } from '@/lib/config';
-import { base64ToBytes } from '@/lib/bytes';
+import { base64ToBytes, bytesToBase64 } from '@/lib/bytes';
 import { padFactoryAbi } from '@/lib/evm/abi';
 import type { FeeSchedule } from '@/lib/fees';
 import { formatBps, registryNumber } from '@/lib/format';
@@ -202,21 +203,46 @@ export function LaunchFlow({
 
 	const signSolana = useCallback(
 		async (d: Draft) => {
-			if (!solana.publicKey || !solana.signTransaction) throw new Error('Connect a Solana wallet that can sign transactions.');
-			const built = await postJson<{ transaction: string; lastValidBlockHeight: number }>(`/api/drafts/${d.id}/solana-tx`, {
+			if (!solana.publicKey || !solana.signAllTransactions) {
+				throw new Error('Connect a Solana wallet that can sign multiple transactions (Phantom, Solflare, Backpack).');
+			}
+			const built = await postJson<{ transactions: string[]; lastValidBlockHeight: number }>(`/api/drafts/${d.id}/solana-tx`, {
 				payer: solana.publicKey.toBase58(),
 			});
-			const tx = Transaction.from(base64ToBytes(built.transaction));
-			const signed = await solana.signTransaction(tx);
-			const signature = await solanaConnection.sendRawTransaction(signed.serialize(), { maxRetries: 5 });
+			const unsigned = built.transactions.map((b) => Transaction.from(base64ToBytes(b)));
+			const signed = await solana.signAllTransactions(unsigned);
+			const last = signed[signed.length - 1];
+			const signature = bs58.encode(last.signature!);
 			writeStored(txKey(d.id), signature);
 			setTxRef(signature);
 			setPhase('confirming');
-			const result = await solanaConnection.confirmTransaction(
-				{ signature, blockhash: tx.recentBlockhash!, lastValidBlockHeight: built.lastValidBlockHeight },
-				'confirmed',
-			);
-			if (result.value.err) throw new Error('The launch transaction failed on-chain. No token was created.');
+
+			const confirmOne = (sig: string) =>
+				solanaConnection.confirmTransaction(
+					{ signature: sig, blockhash: last.recentBlockhash!, lastValidBlockHeight: built.lastValidBlockHeight },
+					'confirmed',
+				);
+			// Preferred path: one atomic Jito bundle, so the coin, the first buy and the fee split land
+			// together. If the bundle does not land within ~25s, send the same signed transactions in
+			// order through the RPC; a bundle that did land makes those sends no-ops.
+			let landed = false;
+			try {
+				await postJson('/api/solana/bundle', { transactions: signed.map((t) => bytesToBase64(t.serialize())) });
+				landed = await Promise.race([
+					confirmOne(signature).then((r) => !r.value.err),
+					new Promise<boolean>((r) => setTimeout(() => r(false), 25_000)),
+				]);
+			} catch {
+				landed = false;
+			}
+			if (!landed) {
+				for (const tx of signed) {
+					const sig = bs58.encode(tx.signature!);
+					await solanaConnection.sendRawTransaction(tx.serialize(), { maxRetries: 5 }).catch(() => undefined);
+					const result = await confirmOne(sig);
+					if (result.value.err) throw new Error('A launch transaction failed on-chain. Reopen this page to finish or retry.');
+				}
+			}
 			return confirmLaunch(d.id, { signature });
 		},
 		[solana, solanaConnection],

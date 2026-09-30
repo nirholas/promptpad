@@ -148,9 +148,9 @@ export function SolanaTrade({ mint, symbol, state, onSettled }: { mint: string; 
 		return (
 			<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
 				<h2 style={{ fontSize: 20 }}>trade</h2>
-				<p className="muted">${symbol} graduated to a Meteora DAMM v2 pool with permanently locked liquidity. any Solana aggregator routes to it.</p>
-				<a className="btn" href={`https://jup.ag/swap/SOL-${mint}`} target="_blank" rel="noreferrer">
-					trade on jupiter
+				<p className="muted">${symbol} completed its curve and now trades on PumpSwap. every Solana terminal and aggregator routes to it.</p>
+				<a className="btn" href={`https://pump.fun/coin/${mint}`} target="_blank" rel="noreferrer">
+					trade on pump.fun
 				</a>
 			</div>
 		);
@@ -236,16 +236,15 @@ export function SolanaCreatorFees({ mint, state, onSettled }: { mint: string; st
 	const [busy, setBusy] = useState(false);
 	const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 	const owner = wallet.publicKey?.toBase58();
-	const isFeeWallet = owner === state.feeWallet;
 
-	const claim = async () => {
+	const payout = async () => {
 		if (!owner) return;
 		setBusy(true);
 		setMessage(null);
 		try {
-			const built = await post<{ transaction: string; lastValidBlockHeight: number }>('/api/solana/claim', { mint, creator: owner });
+			const built = await post<{ transaction: string; lastValidBlockHeight: number }>('/api/solana/payout', { mint, payer: owner });
 			await signAndSend(built.transaction, built.lastValidBlockHeight);
-			setMessage({ ok: true, text: 'creator fees claimed to your wallet.' });
+			setMessage({ ok: true, text: 'paid out: 70% to the fee wallet, 30% to the platform.' });
 			onSettled();
 		} catch (error) {
 			setMessage({ ok: false, text: friendly(error) });
@@ -258,21 +257,19 @@ export function SolanaCreatorFees({ mint, state, onSettled }: { mint: string; st
 		<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
 			<h2 style={{ fontSize: 20 }}>creator fees</h2>
 			<dl className="kv">
-				<dt>claimable now</dt>
+				<dt>waiting for the fee wallet</dt>
 				<dd>{formatNative(state.creatorFeesClaimableNative, 'SOL')}</dd>
 			</dl>
 			<p className="muted" style={{ fontSize: 13.5 }}>
-				only the fee wallet can claim.{state.graduated ? ' after graduation, its locked LP position keeps earning pool fees, claimable in Meteora.' : ''}
+				the split is locked on pump.fun at launch. anyone can trigger a payout; the SOL only ever goes to the fee wallet and the platform.
 			</p>
-			{!owner ? (
-				<SolanaWalletButton />
-			) : isFeeWallet ? (
-				<button type="button" className="btn" disabled={busy || state.creatorFeesClaimableNative <= 0} onClick={claim}>
+			{owner ? (
+				<button type="button" className="btn" disabled={busy || state.creatorFeesClaimableNative <= 0} onClick={payout}>
 					{busy ? <span className="spinner" /> : null}
-					claim creator fees
+					pay out creator fees
 				</button>
 			) : (
-				<p className="muted" style={{ fontSize: 13.5 }}>the connected wallet is not this token&apos;s fee wallet.</p>
+				<SolanaWalletButton />
 			)}
 			{message ? (
 				<div className={`notice ${message.ok ? 'good' : 'bad'}`} role="status">

@@ -110,20 +110,17 @@ export default async function GuidePage() {
 				<h3>where each fee goes</h3>
 				<ul>
 					<li>
-						<strong>launch fee</strong>: to the platform treasury.
-						{sol ? ' on solana, meteora keeps 10% of it at the protocol level.' : ''}
+						<strong>launch fee</strong>: to the platform treasury, paid inside the launch transaction.
 					</li>
 					<li>
-						<strong>trade fee</strong>: split between the fee wallet and the platform at the creator share.
-						{sol ? ' on solana, meteora takes its protocol cut of every trade fee before the split.' : ''}
+						<strong>robinhood chain</strong>: the 1% trade fee splits 70% to the fee wallet and 30% to the platform, on the
+						curve and in the locked uniswap pool after graduation. there is no graduation fee: the whole raise goes into
+						the pool. anyone can trigger a payout from the token page.
 					</li>
 					<li>
-						<strong>graduation fee</strong>: a percentage of the raise, to the platform, taken when the curve completes.
-					</li>
-					<li>
-						<strong>pool fees after graduation</strong>: the locked liquidity keeps earning. on robinhood chain anyone can
-						trigger a collection from the token page, and it splits creator / platform like the trade fee. on solana the
-						creator and the platform each hold their own permanently locked LP and claim their own fees.
+						<strong>solana</strong>: coins trade on pump.fun. pump.fun keeps its protocol fee; the creator fee is split 70% to
+						the fee wallet and 30% to the platform by a fee-sharing config written at launch and locked forever, on the
+						curve and on PumpSwap after graduation. anyone can trigger a payout.
 					</li>
 				</ul>
 				<p>
@@ -152,10 +149,11 @@ export default async function GuidePage() {
 				</p>
 				<h3>{chainLabel('solana').toLowerCase()}</h3>
 				<p>
-					1,000,000,000 tokens with no mint authority and immutable metadata, on a Meteora Dynamic Bonding Curve. the
-					trade fee opens high and decays over the first minute to stop bots sniping the launch; your own bundled
-					initial buy pays the minimum fee. at {sol ? `${sol.graduationTarget} SOL` : 'the migration threshold'} raised, the pool migrates to
-					Meteora DAMM v2 with 20% of supply and permanently locked liquidity.
+					coins are created on pump.fun, so they appear on pump.fun and every solana terminal from the first second. the
+					launch goes out as one atomic bundle: the coin, your first buy, the launch fee and the locked fee split land
+					together or not at all, so nobody can buy before you and the split can never be skipped. at{' '}
+					{sol ? `${sol.graduationTarget} SOL` : 'the curve target'} raised, pump.fun graduates the coin to PumpSwap and locks
+					its liquidity.
 				</p>
 
 				<h2 id="after">6. after launch</h2>

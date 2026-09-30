@@ -14,8 +14,8 @@ import type { Draft } from './types';
  *
  * - Robinhood Chain: an EIP-712 signature the factory verifies; it emits
  *   `LaunchOrigin(token, channel, ref)` with channel 2 for prompt launches.
- * - Solana: an SPL Memo instruction `<tag>:v1:<channel>:<draftId>` whose required signer is the
- *   attester, inside the same transaction that creates the pool.
+ * - Solana: an SPL Memo instruction `<tag>:v1:<channel>:<draftId>:<mint>` whose required signer is
+ *   the attester, inside the atomic launch bundle that creates the coin and its fee split.
  *
  * Without keys configured, launches still work and are recorded as direct on-chain.
  */
@@ -98,10 +98,10 @@ export async function signEvmOrigin(draft: Draft, creator: Address): Promise<Evm
 }
 
 /** Memo instruction the attester must co-sign; returns null when no Solana attester is set. */
-export function solanaOriginInstruction(draft: Draft) {
+export function solanaOriginInstruction(draft: Draft, mint: string) {
 	const attester = solanaAttester();
 	if (!attester) return null;
-	const text = `${ORIGIN_TAG}:v1:${channelFor(draft.source)}:${draft.id}`;
+	const text = `${ORIGIN_TAG}:v1:${channelFor(draft.source)}:${draft.id}:${mint}`;
 	return {
 		instruction: new TransactionInstruction({
 			programId: MEMO_PROGRAM,
