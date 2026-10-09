@@ -17,7 +17,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@pump-fun/pump-sdk": "^2.0.0",
+    "@pump-fun/pump-sdk": "^4.0.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/wallet-adapter-base": "^0.9.28",
     "@solana/wallet-adapter-react": "^0.15.40",

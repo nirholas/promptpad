@@ -12,7 +12,7 @@ import { SolanaWalletButton } from './WalletButtons';
 
 const SLIPPAGE_BPS = 200;
 
-type Quote = { amountOut: number; minimumAmountOut: number; fee: number };
+type Quote = { amountOut: number; fee: number; completesCurve: boolean };
 
 async function post<T>(url: string, body: unknown): Promise<T> {
 	const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -25,7 +25,10 @@ function friendly(error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
 	if (/rejected|denied|cancel/i.test(message)) return 'You declined in your wallet.';
 	if (/insufficient/i.test(message)) return 'Not enough SOL for this trade and network fees.';
-	if (/slippage|ExceededSlippage|0x1771/i.test(message)) return 'The price moved past your limit. Try again.';
+	if (/slippage|ExceededSlippage|0x1771|0x1772|0x1773|0x179a|"Custom":(6001|6002|6003|6042)\b/i.test(message)) return 'The price moved past your limit. Try again.';
+	if (/BondingCurveComplete|0x1775|"Custom":6005\b/.test(message)) return 'The curve just completed. Trading resumes on PumpSwap once the coin migrates.';
+	if (/NotEnoughTokensToBuy|0x1785|"Custom":6021\b/.test(message)) return 'Not enough tokens left on the curve for that buy. Try a smaller amount.';
+	if (/CreatorFeesNotSwept|0x17cf|"Custom":6095\b/.test(message)) return 'New creator fees arrived while you signed. Try the payout again.';
 	return message.split('\n')[0].slice(0, 200);
 }
 
@@ -202,6 +205,12 @@ export function SolanaTrade({ mint, symbol, state, onSettled }: { mint: string; 
 					<dt>max slippage</dt>
 					<dd>2%</dd>
 				</dl>
+				{quote?.completesCurve ? (
+					<div className="notice warn" role="status">
+						<span aria-hidden="true">!</span>
+						<span>this buy completes the curve. the part past what is left is bought at the price the PumpSwap pool will open at, and trading pauses until the coin migrates.</span>
+					</div>
+				) : null}
 				{quoteError ? <div className="notice bad" role="alert"><span aria-hidden="true">!</span><span>{quoteError}</span></div> : null}
 				{result ? (
 					<div className={`notice ${result.ok ? 'good' : 'bad'}`} role="status">

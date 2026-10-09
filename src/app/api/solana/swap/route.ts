@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 			const quote = await quoteSwap(body.mint, side, amount).catch((e: Error) => {
 				throw new LaunchError(e.message);
 			});
-			return json({ quote: quote.display });
+			return json({ quote });
 		}
 		if (!body.owner || !isSolanaAddress(body.owner)) throw new LaunchError('Connect a Solana wallet first.');
 		const built = await buildSwapTransaction(body.mint, body.owner, side, amount, slippageBps).catch((e: Error) => {

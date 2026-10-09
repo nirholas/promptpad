@@ -64,7 +64,11 @@ A launch is two transactions (a single one exceeds Solana's 1232-byte packet lim
 1. create the coin + the creator's first buy (so nobody buys before the creator)
 2. launch fee + fee-sharing config + locked 70/30 split + attester-signed provenance memo + Jito tip
 
-They land together or not at all. If the block engine is unreachable, the site sends the same signed transactions in order through the RPC, and a coin whose split was not written can be finished from its checkout link (only the second transaction is rebuilt). The mint keypair signs only the first transaction and the attester only the second, both server-side, so neither can be altered. Coin metadata JSON is served at `/m/<draftId>`. There is no on-chain setup: setting `NEXT_PUBLIC_SOLANA_TREASURY` opens the lane.
+They land together or not at all. If the block engine is unreachable, the site sends the same signed transactions in order through the RPC, and a coin whose split was not written can be finished from its checkout link (only the second transaction is rebuilt, as described below). The mint keypair signs only the first transaction and the attester only the second, both server-side, so neither can be altered. Coin metadata JSON is served at `/m/<draftId>`. There is no on-chain setup: setting `NEXT_PUBLIC_SOLANA_TREASURY` opens the lane.
+
+A coin finished from its checkout link may have been traded in the meantime, and since pump.fun's October 2026 upgrade those trades leave the creator fee on the curve, where it blocks the fee-sharing config (`6095 CreatorFeesNotSwept`). The rebuilt split therefore opens with `sweep_creator_fee`, and the Jito tip moves into its own transaction ahead of it so the split still fits in one packet.
+
+Token pages trade on the curve with `buy_exact_quote_in_v3` and `sell_v3`, which keep the protocol and creator fees on the curve until a permissionless sweep. Buys are quoted with `getBuyV3TokenAmountFromQuoteAmount`: a buy past what is left on the curve completes it and buys the rest at the PumpSwap pool's opening price (synthetic migration), and the panel warns before signing one. Cashback coins reject v3 (`6094 CashbackCoinNotSupported`) and trade through `buy_v2` / `sell_v2`. Coins quoted in a token other than SOL are sent to pump.fun.
 
 ## Stack
 
@@ -95,7 +99,7 @@ cd contracts && PAD_OWNER=<addr> PAD_TREASURY=<addr> \
 ```bash
 npm test                                                   # unit + integration (PGlite, validation, SSRF guard)
 cd contracts && ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com forge test   # fork tests on real Uniswap v3
-PUMP_SIM_PAYER=<funded address> npm test   # builds and simulates the real pump.fun launch bundle on mainnet, sends nothing
+PUMP_SIM_PAYER=<funded address> npm test   # simulates the real launch bundle, a resumed split, and v3 / v2 trades on mainnet, sends nothing
 npm run typecheck && npm run lint
 ```
 
@@ -157,7 +161,7 @@ These steps spend real funds and are run by the owner.
   ```
   What is waiting: `cast call 0xDD47D5e5De93E968Df0BdF02e426f82d4EA0D4f6 "protocolFeesOwed()(uint256)" --rpc-url https://rpc.mainnet.chain.robinhood.com`.
   Pool fees on graduated tokens: `collectLpFees(token)`, also callable from each token page. The treasury share goes straight to the treasury.
-- **Solana.** The launch fee arrives in the treasury inside each launch bundle. Creator fees are paid out by a permissionless payout that sends 70% to the fee wallet and 30% to the treasury; token pages have a button for it, and this pays out every launch at once:
+- **Solana.** The launch fee arrives in the treasury inside each launch bundle. Creator fees are paid out by a permissionless payout that sends 70% to the fee wallet and 30% to the treasury. Trades leave the creator fee on the curve, and on PumpSwap in the pool, until it is swept, so each payout transaction sweeps the curve (and the pool once the coin has graduated) before it distributes; the amount shown as claimable counts both. Token pages have a button for it, and this pays out every launch at once:
   ```bash
   SITE=https://<domain> SOLANA_KEYPAIR=<any funded keypair> node scripts/solana-payout-all.ts [--send]
   ```

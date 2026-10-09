@@ -127,7 +127,9 @@ export default async function GuidePage() {
 					<li>
 						<strong>solana</strong>: coins trade on pump.fun. pump.fun keeps its protocol fee; the creator fee is split 70% to
 						the fee wallet and 30% to the platform by a fee-sharing config written at launch and locked forever, on the
-						curve and on PumpSwap after graduation. anyone can trigger a payout.
+						curve and on PumpSwap after graduation. trades leave the creator fee waiting on the curve (or in the pool once
+						the coin has graduated) until a payout sweeps it out, and every payout sweeps first, so nothing waiting is ever
+						left behind. anyone can trigger a payout.
 					</li>
 				</ul>
 				<p>
@@ -162,13 +164,21 @@ export default async function GuidePage() {
 					{sol ? `${sol.graduationTarget} SOL` : 'the curve target'} raised, pump.fun graduates the coin to PumpSwap and locks
 					its liquidity.
 				</p>
+				<p>
+					the buy / sell panel trades on the curve with pump.fun&apos;s v3 instructions. a buy bigger than what is left on
+					the curve does not fail: it buys the rest of the curve, completes it, and buys the remainder at the price the
+					PumpSwap pool will open at. the panel warns you before you sign such a buy, and trading pauses until the coin
+					migrates. cashback coins, which the v3 instructions do not accept, trade through the v2 ones instead. coins
+					paired with a token other than SOL trade on pump.fun.
+				</p>
 
 				<h2 id="after">6. after launch</h2>
 				<ul>
 					<li>every token has a page with live price, market cap, curve progress, a buy / sell panel and its fee payouts.</li>
 					<li>
-						creator fees: on robinhood chain anyone can press pay out and the ETH goes to the fee wallet. on solana the
-						fee wallet connects and claims.
+						creator fees: on robinhood chain anyone can press pay out and the ETH goes to the fee wallet. on solana anyone
+						can press pay out too: one transaction sweeps the fees waiting on the curve and in the pool, then pays 70% to
+						the fee wallet and 30% to the platform.
 					</li>
 					<li>
 						every launch gets a registry number in order of birth. launches made straight against the contracts, outside

@@ -6,7 +6,10 @@ import {
 	computeFeesBps,
 	feeSharingConfigPda,
 	getBuyTokenAmountFromSolAmount,
+	getBuyV3TokenAmountFromQuoteAmount,
 	getSellSolAmountFromTokenAmount,
+	isLegacyQuoteMint,
+	normalizeQuoteMint,
 	newBondingCurve,
 	OnlinePumpSdk,
 	PUMP_SDK,
@@ -14,7 +17,7 @@ import {
 	type Global,
 	type FeeConfig,
 } from '@pump-fun/pump-sdk';
-import { getTokenMetadata, NATIVE_MINT, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { getTokenMetadata, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import {
 	Connection,
 	Keypair,
@@ -28,6 +31,7 @@ import BN from 'bn.js';
 import { SITE_URL, SOLANA_LAUNCH_FEE_SOL, SOLANA_RPC_URL, SOLANA_TREASURY } from '../config';
 import { attesters, CHANNELS, MEMO_PROGRAM, ORIGIN_TAG, solanaOriginInstruction } from '../origin';
 import type { Draft, TokenState } from '../types';
+import { readPoolCreatorFees } from './pool-fees';
 
 /**
  * Solana launches run on pump.fun: the coin is created on pump.fun's own bonding curve (and so
@@ -114,7 +118,14 @@ function serialize(tx: Transaction) {
 	return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
 }
 
-async function splitInstructions(draft: Draft, mint: PublicKey, creator: PublicKey): Promise<TransactionInstruction[]> {
+/** `sweep_creator_fee` for a curve whose current creator is `creator`; `payer` signs (the creator by default). */
+async function creatorFeeSweep(mint: PublicKey, creator: PublicKey, curveQuoteMint: PublicKey, payer: PublicKey = creator) {
+	const quoteMint = normalizeQuoteMint(curveQuoteMint);
+	const quoteTokenProgram = isLegacyQuoteMint(quoteMint) ? TOKEN_PROGRAM_ID : await pump.fetchQuoteTokenProgram(quoteMint);
+	return PUMP_SDK.sweepCreatorFeeInstruction({ payer, mint, creator, quoteMint, quoteTokenProgram });
+}
+
+async function splitInstructions(draft: Draft, mint: PublicKey, creator: PublicKey, existing: BondingCurve | null): Promise<TransactionInstruction[]> {
 	const platform = treasury();
 	const feeWallet = new PublicKey(draft.feeWallet);
 	const shareholders = feeWallet.equals(platform)
@@ -123,7 +134,14 @@ async function splitInstructions(draft: Draft, mint: PublicKey, creator: PublicK
 				{ address: feeWallet, shareBps: CREATOR_SHARE_BPS },
 				{ address: platform, shareBps: PLATFORM_SHARE_BPS },
 			];
+	// v3 trades leave the creator fee on the curve, and handing the curve to the sharing config fails
+	// with 6095 CreatorFeesNotSwept while any is there. A coin resumed after an interrupted launch
+	// may have been traded since, so its split starts with the sweep (it moves nothing when the
+	// bucket is empty). A fresh launch needs none: the bundle's only trade is the creator's first
+	// buy, which pays its fees out in the trade.
+	const sweep = existing ? [await creatorFeeSweep(mint, creator, existing.quoteMint)] : [];
 	return [
+		...sweep,
 		await PUMP_SDK.createFeeSharingConfig({ creator, mint, pool: null }),
 		await PUMP_SDK.updateFeeShares({ authority: creator, mint, currentShareholders: [creator], newShareholders: shareholders }),
 	];
@@ -132,8 +150,9 @@ async function splitInstructions(draft: Draft, mint: PublicKey, creator: PublicK
 /**
  * Builds the launch bundle for a draft. The fresh mint keypair and the attester sign here; the
  * launcher's wallet adds the final signatures to both transactions. If the coin already exists
- * but its fee split was never written (an interrupted non-bundle send), only the second
- * transaction is returned, so the launch can be completed.
+ * but its fee split was never written (an interrupted non-bundle send), only the split is rebuilt
+ * (opened by a creator-fee sweep, with the Jito tip in its own transaction ahead of it), so the
+ * launch can be completed.
  */
 export async function buildLaunchBundle(draft: Draft, payer: string, existingMint: string | null) {
 	const payerKey = new PublicKey(payer);
@@ -183,14 +202,22 @@ export async function buildLaunchBundle(draft: Draft, payer: string, existingMin
 		transactions.push(serialize(tx1));
 	}
 
+	const tip = SystemProgram.transfer({ fromPubkey: payerKey, toPubkey: await jitoTipAccount(), lamports: await jitoTipLamports() });
+	if (existing) {
+		// A resumed split opens with the creator-fee sweep, which leaves no room for the tip in one
+		// packet. The tip rides alone ahead of it in the same bundle, so the split stays atomic with its
+		// sweep and remains the last transaction (the one the launch is confirmed by).
+		transactions.push(serialize(new Transaction({ feePayer: payerKey, recentBlockhash: blockhash }).add(tip)));
+	}
+
 	const tx2 = new Transaction({ feePayer: payerKey, recentBlockhash: blockhash });
 	if (SOLANA_LAUNCH_FEE_SOL > 0 && !existing) {
 		tx2.add(SystemProgram.transfer({ fromPubkey: payerKey, toPubkey: treasury(), lamports: Math.round(SOLANA_LAUNCH_FEE_SOL * 1e9) }));
 	}
-	tx2.add(...(await splitInstructions(draft, mintKey, payerKey)));
+	tx2.add(...(await splitInstructions(draft, mintKey, payerKey, existing)));
 	const origin = solanaOriginInstruction(draft, mintKey.toBase58());
 	if (origin) tx2.add(origin.instruction);
-	tx2.add(SystemProgram.transfer({ fromPubkey: payerKey, toPubkey: await jitoTipAccount(), lamports: await jitoTipLamports() }));
+	if (!existing) tx2.add(tip);
 	if (origin) tx2.partialSign(origin.signer);
 	transactions.push(serialize(tx2));
 
@@ -326,8 +353,14 @@ export async function readPumpTokenState(mint: string): Promise<TokenState | nul
 
 	let claimable = 0;
 	if (sharing) {
-		const result = await pump.getMinimumDistributableFee(mintKey).catch(() => null);
-		claimable = result ? Number(result.distributableFees.toString()) / 1e9 : 0;
+		// The distributable figure already includes creator fees v3 trades left on the curve. After
+		// graduation, PumpSwap v2 trades leave theirs in the pool, which the payout sweeps first, so
+		// they are added here.
+		const [result, pooled] = await Promise.all([
+			pump.getMinimumDistributableFee(mintKey).catch(() => null),
+			curve.complete ? readPoolCreatorFees(connection, mintKey, curve.quoteMint).catch(() => new BN(0)) : new BN(0),
+		]);
+		claimable = ((result ? Number(result.distributableFees.toString()) : 0) + Number(pooled.toString())) / 1e9;
 	}
 
 	const target = graduationTargetSol(global);
@@ -414,22 +447,72 @@ async function tokenProgramFor(mint: PublicKey) {
 	return info.owner;
 }
 
-export async function quoteSwap(mint: string, side: SwapSide, amount: number) {
+/**
+ * Bonding-curve trades use the v3 instructions (17 accounts; the protocol and creator fee stay on
+ * the curve until a sweep pays them out). Cashback coins reject v3 with 6094
+ * `CashbackCoinNotSupported`, and v3 always charges the fee-config schedule, so those coins (and a
+ * fee config that could not be read) trade through v2, which pays the fees out in the trade.
+ */
+function tradesOnV3(curve: BondingCurve, feeConfig: FeeConfig | null): feeConfig is FeeConfig {
+	return !curve.isCashbackCoin && feeConfig !== null;
+}
+
+/**
+ * Everything a quote and the matching transaction need, read once. The owner only selects the
+ * trader's token account; a quote without a wallet reads the same curve state.
+ */
+async function prepareSwap(mint: string, side: SwapSide, amount: number, owner: PublicKey | null) {
 	const mintKey = new PublicKey(mint);
-	const curve = await pump.fetchBondingCurve(mintKey).catch(() => null);
-	if (!curve) throw new Error('No curve for that token.');
-	if (curve.complete) throw new Error('This token has graduated off the curve. Trade it on pump.fun.');
+	const tokenProgram = await tokenProgramFor(mintKey);
+	const state = await pump.fetchBuyState(mintKey, owner ?? PublicKey.default, tokenProgram).catch(() => null);
+	if (!state) throw new Error('No curve for that token.');
+	const curve = state.bondingCurve;
+	if (curve.complete) throw new Error('This token has completed its curve. Trade it on pump.fun.');
+	// Amounts here are SOL and lamports. A coin paired with another token takes that token as
+	// payment, so a SOL amount would mean nothing to it.
+	if (!isLegacyQuoteMint(curve.quoteMint)) throw new Error('This token is paired with another token, not SOL. Trade it on pump.fun.');
 	const { global, feeConfig } = await protocol();
 	const fees = curveFees(global, feeConfig, curve);
+	const v3 = tradesOnV3(curve, feeConfig);
+	const mintSupply = curve.tokenTotalSupply;
+
 	if (side === 'buy') {
 		const lamports = new BN(Math.floor(amount * 1e9));
-		const out = getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: curve.tokenTotalSupply, bondingCurve: curve, amount: lamports, quoteMint: curve.quoteMint });
-		return { curve, amountIn: lamports, amountOut: out, display: { amountOut: Number(out.toString()) / 1e6, fee: (amount * fees.totalBps) / 10_000 } };
+		// A v3 buy that empties the curve keeps going (synthetic migration): the rest is bought from
+		// the tokens the PumpSwap pool would receive, at that pool's opening price, so the quote
+		// needs the curve's own token balance to price that part.
+		const out = v3
+			? getBuyV3TokenAmountFromQuoteAmount({ global, feeConfig, mintSupply, bondingCurve: curve, amount: lamports, curveBaseTokenBalance: state.curveBaseTokenBalance })
+			: getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply, bondingCurve: curve, amount: lamports, quoteMint: curve.quoteMint });
+		if (out.isZero()) throw new Error('That amount buys no tokens. Enter a larger amount.');
+		return {
+			state,
+			tokenProgram,
+			v3,
+			amountIn: lamports,
+			amountOut: out,
+			display: {
+				amountOut: Number(out.toString()) / 1e6,
+				fee: (amount * fees.totalBps) / 10_000,
+				completesCurve: out.gte(curve.realTokenReserves),
+			},
+		};
 	}
 	const tokens = new BN(Math.floor(amount * 1e6));
-	const out = getSellSolAmountFromTokenAmount({ global, feeConfig, mintSupply: curve.tokenTotalSupply, bondingCurve: curve, amount: tokens });
+	const out = getSellSolAmountFromTokenAmount({ global, feeConfig, mintSupply, bondingCurve: curve, amount: tokens });
 	const sol = Number(out.toString()) / 1e9;
-	return { curve, amountIn: tokens, amountOut: out, display: { amountOut: sol, fee: (sol * fees.totalBps) / (10_000 - fees.totalBps) } };
+	return {
+		state,
+		tokenProgram,
+		v3,
+		amountIn: tokens,
+		amountOut: out,
+		display: { amountOut: sol, fee: (sol * fees.totalBps) / (10_000 - fees.totalBps), completesCurve: false },
+	};
+}
+
+export async function quoteSwap(mint: string, side: SwapSide, amount: number) {
+	return (await prepareSwap(mint, side, amount, null)).display;
 }
 
 async function finalize(ixs: TransactionInstruction[], payer: PublicKey) {
@@ -442,38 +525,42 @@ export async function buildSwapTransaction(mint: string, owner: string, side: Sw
 	const mintKey = new PublicKey(mint);
 	const ownerKey = new PublicKey(owner);
 	const { global } = await protocol();
-	const q = await quoteSwap(mint, side, amount);
-	const tokenProgram = await tokenProgramFor(mintKey);
-	const slippage = slippageBps / 100;
-	const ixs =
-		side === 'buy'
-			? await (async () => {
-					const state = await pump.fetchBuyState(mintKey, ownerKey, tokenProgram);
-					return PUMP_SDK.buyInstructions({ global, ...state, mint: mintKey, user: ownerKey, amount: q.amountOut, solAmount: q.amountIn, slippage, tokenProgram });
-				})()
-			: await (async () => {
-					const state = await pump.fetchSellState(mintKey, ownerKey, tokenProgram);
-					return PUMP_SDK.sellInstructions({
-						global,
-						...state,
-						mint: mintKey,
-						user: ownerKey,
-						amount: q.amountIn,
-						solAmount: q.amountOut,
-						slippage,
-						tokenProgram,
-						mayhemMode: state.bondingCurve.isMayhemMode,
-						cashback: state.bondingCurve.isCashbackCoin,
-					});
-				})();
+	const q = await prepareSwap(mint, side, amount, ownerKey);
+	const { bondingCurve, bondingCurveAccountInfo, associatedUserAccountInfo, quoteTokenProgram } = q.state;
+	const trade = { bondingCurve, mint: mintKey, user: ownerKey, slippage: slippageBps / 100, tokenProgram: q.tokenProgram, quoteTokenProgram };
+	let ixs: TransactionInstruction[];
+	if (side === 'buy') {
+		// Spend exactly what the trader typed and require the quoted tokens less slippage. On a mayhem
+		// curve (no synthetic migration) a budget past the remaining supply buys what is left.
+		ixs = q.v3
+			? await PUMP_SDK.buyExactQuoteInV3Instructions({ ...trade, associatedUserAccountInfo, amount: q.amountOut, quoteAmount: q.amountIn, partialFill: bondingCurve.isMayhemMode })
+			: await PUMP_SDK.buyV2Instructions({ ...trade, global, bondingCurveAccountInfo, associatedUserAccountInfo, amount: q.amountOut, quoteAmount: q.amountIn });
+	} else {
+		ixs = q.v3
+			? await PUMP_SDK.sellV3Instructions({ ...trade, amount: q.amountIn, quoteAmount: q.amountOut })
+			: await PUMP_SDK.sellV2Instructions({ ...trade, global, bondingCurveAccountInfo, amount: q.amountIn, quoteAmount: q.amountOut });
+	}
 	return { ...(await finalize(ixs, ownerKey)), quote: q.display };
 }
 
-/** Pays accrued creator fees out to the split's shareholders. Permissionless: any wallet can crank it. */
+/**
+ * Pays accrued creator fees out to the split's shareholders. Permissionless: any wallet can crank it.
+ * Since the October 2026 upgrade the v3 curve trades and PumpSwap v2 trades keep the creator fee on
+ * the curve and in the pool, and distribution refuses to run while the curve still holds some, so
+ * the SDK puts `sweep_creator_fee` (curve, then pool when it has migrated) ahead of the
+ * consolidation and the distribution, all in this one transaction. The payer signs the sweeps.
+ */
 export async function buildPayoutTransaction(mint: string, payer: string) {
 	const payerKey = new PublicKey(payer);
-	const result = await pump.buildDistributeCreatorFeesInstructions(new PublicKey(mint), { payer: payerKey });
+	const mintKey = new PublicKey(mint);
+	const result = await pump.buildDistributeCreatorFeesInstructions(mintKey, { payer: payerKey });
 	if (!result.instructions.length) throw new Error('Nothing to pay out yet.');
+	// The SDK sweeps the curve only when its bucket held something as this was built. On a coin still
+	// on its curve a trade can land between building and sending, and the distribution would then
+	// fail with 6095, so the sweep goes in regardless: it moves nothing when the bucket is empty.
+	if (!result.isGraduated && result.sweepCount === 0) {
+		const curve = await pump.fetchBondingCurve(mintKey);
+		if (!curve.complete) result.instructions.unshift(await creatorFeeSweep(mintKey, curve.creator, curve.quoteMint, payerKey));
+	}
 	return finalize(result.instructions, payerKey);
 }
-
