@@ -212,3 +212,7 @@ In Claude: settings, connectors, add custom connector, then paste `https://promp
 | `src/lib/origin.ts` | launch provenance: EIP-712 attestations and the Solana memo |
 | `wrangler.jsonc`, `open-next.config.ts` | Cloudflare Workers deployment |
 | `tests/` | vitest suites |
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=nirholas/promptpad&type=Date)](https://www.star-history.com/#nirholas/promptpad&Date)
