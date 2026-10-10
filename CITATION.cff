@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: "promptpad"
+abstract: "Launch a token from a prompt: Claude MCP connector + launchpad on Robinhood Chain and Solana. Bonding curve, locked liquidity at graduation, creator fees to you."
+repository-code: "https://github.com/nirholas/promptpad"
+url: "https://three.ws"
+authors:
+  - name: three.ws
+    website: "https://three.ws"

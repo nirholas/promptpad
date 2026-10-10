@@ -1,0 +1,28 @@
+# promptpad
+
+> Launch a token from a prompt: Claude MCP connector + launchpad on Robinhood Chain and Solana. Bonding curve, locked liquidity at graduation, creator fees to you.
+
+promptpad is an open-source repository by nirholas, part of the three.ws ecosystem.
+
+## Docs
+
+- [README](https://github.com/nirholas/promptpad/blob/HEAD/README.md): install, usage and reference
+- [How it works](https://github.com/nirholas/promptpad/blob/HEAD/README.md#how-it-works)
+- [Stack](https://github.com/nirholas/promptpad/blob/HEAD/README.md#stack)
+- [Run locally](https://github.com/nirholas/promptpad/blob/HEAD/README.md#run-locally)
+- [Tests](https://github.com/nirholas/promptpad/blob/HEAD/README.md#tests)
+- [Deployments](https://github.com/nirholas/promptpad/blob/HEAD/README.md#deployments)
+- [Deploying your own](https://github.com/nirholas/promptpad/blob/HEAD/README.md#deploying-your-own)
+- [Collecting revenue](https://github.com/nirholas/promptpad/blob/HEAD/README.md#collecting-revenue)
+- [Operating the Robinhood Chain factory](https://github.com/nirholas/promptpad/blob/HEAD/README.md#operating-the-robinhood-chain-factory)
+- [AGENTS.md](https://github.com/nirholas/promptpad/blob/HEAD/AGENTS.md): guidance for coding agents
+- [Full text for LLMs](https://github.com/nirholas/promptpad/blob/HEAD/llms-full.txt): the README inlined
+
+## Project
+
+- [Source](https://github.com/nirholas/promptpad)
+- [Issues](https://github.com/nirholas/promptpad/issues)
+- [Discussions](https://github.com/nirholas/promptpad/discussions)
+- [Homepage](http://promptpad.fun/)
+- [three.ws](https://three.ws): the platform this is part of
+- [All repositories by nirholas](https://github.com/nirholas/nirholas#readme)
