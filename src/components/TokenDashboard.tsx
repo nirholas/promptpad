@@ -7,9 +7,13 @@ import { formatBps, formatNative, formatPercent, shortAddress } from '@/lib/form
 import type { TokenState } from '@/lib/types';
 import { CopyButton } from './CopyButton';
 import { EvmCreatorFees, EvmTrade } from './EvmTrade';
+import { MarketStrip, MarketTabs, type MarketData } from './MarketPanel';
+import { PriceChart } from './PriceChart';
 import { SolanaCreatorFees, SolanaTrade } from './SolanaTrade';
+import { SafetyCard, TerminalLinks } from './TokenInsights';
 
 const POLL_MS = 15_000;
+const MARKET_POLL_MS = 6_000;
 
 export function TokenDashboard({
 	chain,
@@ -17,15 +21,41 @@ export function TokenDashboard({
 	symbol,
 	initial,
 	description,
+	creator,
+	attested,
 }: {
 	chain: ChainKey;
 	address: string;
 	symbol: string;
 	initial: TokenState | null;
 	description: string;
+	creator: string;
+	attested: boolean;
 }) {
 	const [state, setState] = useState<TokenState | null>(initial);
 	const [stale, setStale] = useState(false);
+	const [market, setMarket] = useState<MarketData | null>(null);
+
+	// Stats, the trade tape and holders refresh faster than the curve read, so the tape feels live.
+	useEffect(() => {
+		let cancelled = false;
+		const load = async () => {
+			try {
+				const res = await fetch(`/api/tokens/${chain}/${address}/market`, { cache: 'no-store' });
+				if (!res.ok) throw new Error(String(res.status));
+				const body = (await res.json()) as MarketData;
+				if (!cancelled) setMarket(body);
+			} catch {
+				// Keep the last good market data; the curve card shows its own outage notice.
+			}
+		};
+		load();
+		const timer = setInterval(() => document.visibilityState === 'visible' && load(), MARKET_POLL_MS);
+		return () => {
+			cancelled = true;
+			clearInterval(timer);
+		};
+	}, [chain, address]);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -77,83 +107,76 @@ export function TokenDashboard({
 		);
 	}
 
+	const usdRate = market?.usd[native as 'ETH' | 'SOL'] ?? null;
+	const curveCard = (
+		<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
+			<h2 className="caps">bonding curve</h2>
+			<div
+				className={`progress ${state.graduated ? 'done' : ''}`}
+				role="progressbar"
+				aria-valuemin={0}
+				aria-valuemax={100}
+				aria-valuenow={Math.round(state.progress * 100)}
+				aria-label="Bonding curve progress"
+				style={{ height: 12 }}
+			>
+				<span style={{ width: `${Math.max(state.progress * 100, 1.5)}%` }} />
+			</div>
+			<div className="progress-label">
+				<span>{state.graduated ? 'graduated. liquidity is locked in the pool.' : `${formatPercent(state.progress)} of the way to graduation`}</span>
+				<span>
+					{formatNative(state.raisedNative)} / {formatNative(state.targetNative)} {native}
+				</span>
+			</div>
+			{!state.graduated ? (
+				<p className="muted" style={{ fontSize: 13, margin: 0 }}>
+					{formatNative(Math.max(state.targetNative - state.raisedNative, 0), native)}
+					{usdRate ? ` (about $${Math.round(Math.max(state.targetNative - state.raisedNative, 0) * usdRate).toLocaleString('en-US')})` : ''} more
+					in buys graduates ${symbol} into a{chain === 'robinhood' ? ' Uniswap v3 pool' : ' PumpSwap pool'} with its liquidity locked forever.
+				</p>
+			) : null}
+			{stale ? (
+				<div className="notice warn" role="status">
+					<span aria-hidden="true">!</span>
+					<span>live numbers could not refresh. showing the last good read.</span>
+				</div>
+			) : null}
+		</div>
+	);
+
 	return (
-		<div className="token-layout">
-			<div style={{ display: 'grid', gap: 20, minWidth: 0 }}>
-				<div className="card card-pad" style={{ display: 'grid', gap: 18 }}>
-					<div className="stats">
-						<div className="stat">
-							<span>price</span>
-							<strong title={`${state.priceNative} ${native}`}>{formatNative(state.priceNative, native)}</strong>
-						</div>
-						<div className="stat">
-							<span>market cap</span>
-							<strong>{formatNative(state.marketCapNative, native)}</strong>
-						</div>
-						<div className="stat">
-							<span>{state.graduated ? 'raised on the curve' : 'raised'}</span>
-							<strong>{formatNative(state.raisedNative, native)}</strong>
-						</div>
+		<div style={{ display: 'grid', gap: 16 }}>
+			<MarketStrip chain={chain} state={state} data={market} />
+			<div className="token-layout">
+				<div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+					<PriceChart chain={chain} address={address} pool={state.pool} usdRate={usdRate} />
+					<MarketTabs chain={chain} address={address} symbol={symbol} state={state} data={market} creator={creator} />
+					<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
+						<h2 className="caps">about</h2>
+						<p style={{ color: 'var(--ink-2)', whiteSpace: 'pre-wrap', margin: 0 }}>{description || 'the creator did not add a description.'}</p>
 					</div>
-					<div>
-						<div
-							className={`progress ${state.graduated ? 'done' : ''}`}
-							role="progressbar"
-							aria-valuemin={0}
-							aria-valuemax={100}
-							aria-valuenow={Math.round(state.progress * 100)}
-							aria-label="Bonding curve progress"
-							style={{ height: 12 }}
-						>
-							<span style={{ width: `${Math.max(state.progress * 100, 1.5)}%` }} />
-						</div>
-						<div className="progress-label">
-							<span>{state.graduated ? 'graduated. liquidity is locked in the pool.' : `${formatPercent(state.progress)} of the way to graduation`}</span>
+					<div className="card card-pad">
+						<h2 className="caps" style={{ marginBottom: 6 }}>on-chain</h2>
+						<AddressRow chain={chain} label="token" value={address} kind="token" />
+						<AddressRow chain={chain} label="fee wallet" value={state.feeWallet} kind="address" />
+						{state.creator !== state.feeWallet ? <AddressRow chain={chain} label="launched by" value={state.creator} kind="address" /> : null}
+						{state.pool ? <AddressRow chain={chain} label={chain === 'solana' ? 'curve pool' : 'uniswap pool'} value={state.pool} kind="address" /> : null}
+						<div className="address-row">
+							<span className="muted">trade fee</span>
 							<span>
-								{formatNative(state.raisedNative)} / {formatNative(state.targetNative)} {native}
+								{formatBps(state.tradeFeeBps)}, {formatBps(state.creatorShareBps)} of it to the fee wallet
 							</span>
 						</div>
 					</div>
-					{stale ? (
-						<div className="notice warn" role="status">
-							<span aria-hidden="true">!</span>
-							<span>live numbers could not refresh. showing the last good read.</span>
-						</div>
-					) : null}
 				</div>
 
-				<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-					<h2 className="caps">about</h2>
-					<p style={{ color: 'var(--ink-2)', whiteSpace: 'pre-wrap' }}>{description || 'the creator did not add a description.'}</p>
+				<div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+					{chain === 'robinhood' ? <EvmTrade token={address} symbol={symbol} state={state} onSettled={refresh} /> : <SolanaTrade mint={address} symbol={symbol} state={state} onSettled={refresh} />}
+					{curveCard}
+					{chain === 'robinhood' ? <EvmCreatorFees token={address} state={state} onSettled={refresh} /> : <SolanaCreatorFees mint={address} state={state} onSettled={refresh} />}
+					<SafetyCard chain={chain} state={state} data={market} attested={attested} />
+					<TerminalLinks chain={chain} address={address} pool={state.pool} />
 				</div>
-
-				<div className="card card-pad">
-					<h2 className="caps" style={{ marginBottom: 6 }}>on-chain</h2>
-					<AddressRow chain={chain} label="token" value={address} kind="token" />
-					<AddressRow chain={chain} label="fee wallet" value={state.feeWallet} kind="address" />
-					{state.creator !== state.feeWallet ? <AddressRow chain={chain} label="launched by" value={state.creator} kind="address" /> : null}
-					{state.pool ? <AddressRow chain={chain} label={chain === 'solana' ? 'curve pool' : 'uniswap pool'} value={state.pool} kind="address" /> : null}
-					<div className="address-row">
-						<span className="muted">trade fee</span>
-						<span>
-							{formatBps(state.tradeFeeBps)}, {formatBps(state.creatorShareBps)} of it to the fee wallet
-						</span>
-					</div>
-				</div>
-			</div>
-
-			<div style={{ display: 'grid', gap: 20, minWidth: 0 }}>
-				{chain === 'robinhood' ? (
-					<>
-						<EvmTrade token={address} symbol={symbol} state={state} onSettled={refresh} />
-						<EvmCreatorFees token={address} state={state} onSettled={refresh} />
-					</>
-				) : (
-					<>
-						<SolanaTrade mint={address} symbol={symbol} state={state} onSettled={refresh} />
-						<SolanaCreatorFees mint={address} state={state} onSettled={refresh} />
-					</>
-				)}
 			</div>
 		</div>
 	);

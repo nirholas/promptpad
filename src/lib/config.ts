@@ -53,9 +53,26 @@ export const robinhoodChain = robinhoodTestnet
 const factory = process.env.NEXT_PUBLIC_PAD_FACTORY || '';
 export const PAD_FACTORY: Address | null = /^0x[0-9a-fA-F]{40}$/.test(factory) ? (factory as Address) : null;
 
+/**
+ * Block the factory was deployed in, where the market indexer starts. The live mainnet factory's
+ * deploy block is built in; another deployment sets NEXT_PUBLIC_PAD_FACTORY_BLOCK.
+ */
+const MAINNET_FACTORY = '0xdd47d5e5de93e968df0bdf02e426f82d4ea0d4f6';
+export const PAD_FACTORY_BLOCK: bigint = BigInt(
+	process.env.NEXT_PUBLIC_PAD_FACTORY_BLOCK || (factory.toLowerCase() === MAINNET_FACTORY ? '76349359' : '0'),
+);
+
 export const ROBINHOOD_WETH: Address = robinhoodTestnet
 	? '0x7943e237c7F95DA44E0301572D358911207852Fa'
 	: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
+
+/** Uniswap v3 periphery used to trade graduated tokens (from @uniswap/sdk-core's Robinhood Chain entry). */
+export const ROBINHOOD_UNISWAP: { router: Address; quoter: Address } | null = robinhoodTestnet
+	? null
+	: { router: '0xCaf681a66D020601342297493863E78C959E5cb2', quoter: '0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7' };
+
+/** Every graduated pool uses the 1% fee tier. */
+export const GRADUATED_POOL_FEE = 10_000;
 
 export function robinhoodExplorer(kind: 'tx' | 'address' | 'token', value: string) {
 	return `${robinhoodChain.blockExplorers.default.url}/${kind}/${value}`;

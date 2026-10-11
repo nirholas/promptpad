@@ -13,7 +13,9 @@ const INSTRUCTIONS = `${SITE_NAME} launches tokens on Robinhood Chain or Solana 
 
 Flow: call launch_token with the details the user gave you. It validates everything and returns a preview plus a checkout link valid for 24 hours. Show the user the preview and the link. The user opens the link, connects their own wallet, reviews the fee, and signs; nothing is launched and nothing is spent until they sign. Afterwards launch_status tells you the token address.
 
-Never invent a name, ticker, logo or fee wallet: ask the user for anything missing. The fee wallet receives the creator's share of trading fees forever and cannot be changed after launch.`;
+Never invent a name, ticker or fee wallet: ask the user for anything missing. A logo is optional; without one, the token gets a generated monochrome mark from its ticker, so do not block a launch on it.
+
+To trade: token_info reads a token's live state, and trade_link returns its page with a buy or sell prefilled for the user to sign. You cannot trade for the user. The fee wallet receives the creator's share of trading fees forever and cannot be changed after launch.`;
 
 function text(value: string, structured?: Record<string, unknown>) {
 	return {
@@ -60,7 +62,10 @@ function buildServer(requester: string) {
 				chain: z.enum(['robinhood', 'solana']).describe('robinhood = Robinhood Chain (ETH). solana = Solana (SOL).'),
 				name: z.string().describe('Token name, up to 32 bytes.'),
 				ticker: z.string().describe('Ticker, 1 to 10 letters or digits, without the $.'),
-				logo_url: z.string().describe('Public https link to the logo image (png, jpg, gif, webp, svg).'),
+				logo_url: z
+					.string()
+					.optional()
+					.describe('Optional public https link to the logo image (png, jpg, gif, webp, svg). Omit it to use a generated mark from the ticker.'),
 				description: z.string().optional().describe('Optional one-paragraph description, up to 1000 bytes.'),
 				fee_wallet: z
 					.string()
@@ -79,7 +84,7 @@ function buildServer(requester: string) {
 						chain: args.chain,
 						name: args.name,
 						symbol: args.ticker,
-						image: args.logo_url,
+						image: args.logo_url ?? '',
 						description: args.description ?? '',
 						feeWallet: args.fee_wallet,
 						initialBuy: args.initial_buy ?? '0',
@@ -211,6 +216,47 @@ function buildServer(requester: string) {
 						`#${l.number} ${l.name} ($${l.symbol}) on ${chainLabel(l.chain)}${l.graduated ? ', graduated' : ''}: ${SITE_URL}/t/${l.chain}/${l.address}`,
 				);
 				return text(lines.join('\n'), { total, launches });
+			} catch (error) {
+				return failure(describeError(error));
+			}
+		},
+	);
+
+	server.registerTool(
+		'trade_link',
+		{
+			title: 'Prepare a trade',
+			description:
+				'Return the token page with a buy or sell already filled in, plus the live price and what the amount gets. The user reviews and signs in their own wallet; this tool never trades.',
+			inputSchema: {
+				chain: z.enum(['robinhood', 'solana']),
+				address: z.string().describe('Token address (0x... on Robinhood Chain, mint on Solana).'),
+				side: z.enum(['buy', 'sell']),
+				amount: z
+					.string()
+					.regex(/^\d+(\.\d+)?$/, 'Amount must be a plain number like "0.05".')
+					.describe('For a buy, ETH or SOL to spend. For a sell, how many tokens to sell.'),
+			},
+			annotations: { readOnlyHint: true, openWorldHint: true },
+		},
+		async ({ chain, address, side, amount }) => {
+			try {
+				const state = await readTokenState(chain, address);
+				if (!state) return failure('No token launched here at that address.');
+				const native = nativeSymbol(chain);
+				const page = `${SITE_URL}/t/${chain}/${address}?side=${side}&amount=${amount}`;
+				const estimate =
+					side === 'buy'
+						? `about ${(Number(amount) / state.priceNative).toLocaleString('en-US', { maximumFractionDigits: 0 })} tokens at the current price, before fees and price impact`
+						: `about ${(Number(amount) * state.priceNative).toPrecision(4)} ${native} at the current price, before fees and price impact`;
+				return text(
+					[
+						`${side === 'buy' ? 'Buy' : 'Sell'} ${amount} ${side === 'buy' ? native : 'tokens'}: ${estimate}.`,
+						state.graduated ? 'The token has graduated; the trade routes through its pool.' : `Trading on the bonding curve, ${(state.progress * 100).toFixed(1)}% to graduation.`,
+						`Open to review and sign: ${page}`,
+					].join('\n'),
+					{ page, side, amount, chain, address, priceNative: state.priceNative, graduated: state.graduated },
+				);
 			} catch (error) {
 				return failure(describeError(error));
 			}

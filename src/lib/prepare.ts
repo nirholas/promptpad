@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { SITE_URL } from './config';
+import { generatedLogoPath } from './logo';
 import { createDraft, LaunchError } from './launches';
 import { checkImageUrl } from './net';
 import { allow } from './rate-limit';
@@ -17,8 +18,13 @@ export async function prepareLaunch(raw: unknown, source: Draft['source'], reque
 	if (!allow(`draft:${requester}`, 20)) {
 		throw new LaunchError('Too many launch previews from this connection. Try again within the hour.', 429);
 	}
-	const image = await checkImageUrl(input.image);
-	if (!image.ok) throw new LaunchError(image.reason);
+	if (input.image) {
+		const image = await checkImageUrl(input.image);
+		if (!image.ok) throw new LaunchError(image.reason);
+	} else {
+		// No logo given: the launch gets a generated mark, served forever from a deterministic URL.
+		input.image = `${SITE_URL}${generatedLogoPath(input.symbol, input.name)}`;
+	}
 	const draft = await createDraft(input, source, client);
 	return { draft, checkoutUrl: checkoutUrl(draft) };
 }

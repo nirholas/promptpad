@@ -26,6 +26,7 @@
     "@tanstack/react-query": "^5.104.0",
     "bn.js": "^5.2.5",
     "bs58": "^6.0.0",
+    "lightweight-charts": "^5.2.1",
     "next": "16.3.7",
     "pg": "^8.23.0",
     "pg-cloudflare": "^1.4.0",

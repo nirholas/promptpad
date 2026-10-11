@@ -1,5 +1,7 @@
 'use client';
 
+import { generatedLogoPath } from '@/lib/logo';
+import { ShareButton } from './ShareButton';
 import { useConnection as useSolanaConnection, useWallet } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -316,9 +318,13 @@ export function LaunchFlow({
 				</div>
 
 				<div className="field">
-					<label htmlFor="image">logo link</label>
-					<input id="image" className="input" type="url" value={form.image} onChange={set('image')} required readOnly={locked} placeholder="https://…/logo.png" aria-invalid={imageState === 'bad'} />
-					{imageState === 'bad' ? <span className="err">that link did not load as an image in your browser.</span> : <span className="hint">a public https image. it is written on-chain and cannot be changed later.</span>}
+					<label htmlFor="image">logo link <span className="muted">(optional)</span></label>
+					<input id="image" className="input" type="url" value={form.image} onChange={set('image')} readOnly={locked} placeholder="https://…/logo.png" aria-invalid={imageState === 'bad'} />
+					{imageState === 'bad' ? (
+						<span className="err">that link did not load as an image in your browser.</span>
+					) : (
+						<span className="hint">a public https image, written on-chain for good. leave it empty and ${form.symbol || 'the ticker'} gets a generated mark, previewed on the right.</span>
+					)}
 				</div>
 
 				<div className="field">
@@ -388,10 +394,10 @@ export function LaunchFlow({
 				<div className="card card-pad" style={{ display: 'grid', gap: 14 }}>
 					<span className="eyebrow">preview</span>
 					<div className="token-card-top" style={{ gridTemplateColumns: '64px 1fr' }}>
-						{form.image ? (
+						{form.image || form.symbol ? (
 							// eslint-disable-next-line @next/next/no-img-element
 							<img
-								src={form.image}
+								src={form.image || (/^[A-Z0-9]{1,10}$/.test(form.symbol) ? generatedLogoPath(form.symbol, form.name) : '')}
 								alt=""
 								className="token-logo"
 								style={{ width: 64, height: 64, borderRadius: 16 }}
@@ -465,6 +471,7 @@ function LaunchDone({ launch }: { launch: Launch }) {
 				<p className="mono" style={{ fontSize: 13, overflowWrap: 'anywhere' }}>{launch.address}</p>
 				<div className="cta-row" style={{ justifyContent: 'center' }}>
 					<Link href={page} className="btn btn-primary">open the token page</Link>
+					<ShareButton launch={launch} className="btn" />
 					{launch.tx ? (
 						<a href={explorer(launch.chain, 'tx', launch.tx)} target="_blank" rel="noreferrer" className="btn">
 							view transaction

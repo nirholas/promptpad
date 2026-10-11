@@ -9,6 +9,8 @@ import { explorer } from '@/lib/config';
 import { formatNative, formatTokens } from '@/lib/format';
 import type { TokenState } from '@/lib/types';
 import { SolanaWalletButton } from './WalletButtons';
+import { JupiterSwap } from './JupiterSwap';
+import { useTradeIntent } from './useTradeIntent';
 
 const SLIPPAGE_BPS = 200;
 
@@ -57,8 +59,9 @@ export function SolanaTrade({ mint, symbol, state, onSettled }: { mint: string; 
 	const wallet = useWallet();
 	const { connection } = useConnection();
 	const signAndSend = useSignAndSend();
-	const [side, setSide] = useState<'buy' | 'sell'>('buy');
-	const [amount, setAmount] = useState('');
+	const intent = useTradeIntent();
+	const [side, setSide] = useState<'buy' | 'sell'>(intent.side);
+	const [amount, setAmount] = useState(intent.amount);
 	const [quoted, setQuoted] = useState<{ key: string; quote: Quote | null; error: string | null } | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [result, setResult] = useState<{ ok: boolean; text: string; tx?: string } | null>(null);
@@ -147,17 +150,7 @@ export function SolanaTrade({ mint, symbol, state, onSettled }: { mint: string; 
 		}
 	};
 
-	if (state.graduated) {
-		return (
-			<div className="card card-pad" style={{ display: 'grid', gap: 12 }}>
-				<h2 className="caps">trade</h2>
-				<p className="muted">${symbol} completed its curve and now trades on PumpSwap. every Solana terminal and aggregator routes to it.</p>
-				<a className="btn" href={`https://pump.fun/coin/${mint}`} target="_blank" rel="noreferrer">
-					trade on pump.fun
-				</a>
-			</div>
-		);
-	}
+	if (state.graduated) return <JupiterSwap mint={mint} symbol={symbol} />;
 
 	return (
 		<div className="card card-pad">

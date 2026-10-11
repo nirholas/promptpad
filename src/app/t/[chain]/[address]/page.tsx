@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { ChainBadge } from '@/components/ChainBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { OriginChip } from '@/components/OriginChip';
+import { ShareButton } from '@/components/ShareButton';
 import { TokenDashboard } from '@/components/TokenDashboard';
 import { TokenLogo } from '@/components/TokenCard';
 import { WalletProviders } from '@/components/WalletProviders';
@@ -41,7 +42,8 @@ export async function generateMetadata(props: PageProps<'/t/[chain]/[address]'>)
 	return {
 		title: `${launch.name} ($${launch.symbol})`,
 		description: launch.description || `${launch.name} on ${chain}, registry ${registryNumber(launch.number)}.`,
-		openGraph: launch.image ? { images: [{ url: launch.image }] } : undefined,
+		// The share card comes from ./opengraph-image.tsx; the large card format shows it full width.
+		twitter: { card: 'summary_large_image' },
 	};
 }
 
@@ -68,6 +70,7 @@ export default async function TokenPage(props: PageProps<'/t/[chain]/[address]'>
 					</div>
 				</div>
 				<div className="token-actions">
+					<ShareButton launch={launch} className="btn btn-sm btn-primary" />
 					<CopyButton value={launch.address} label="copy address" className="btn btn-sm" />
 					<a className="btn btn-sm" href={explorer(launch.chain, 'token', launch.address)} target="_blank" rel="noreferrer">
 						explorer
@@ -80,7 +83,15 @@ export default async function TokenPage(props: PageProps<'/t/[chain]/[address]'>
 				</div>
 			</section>
 			<WalletProviders>
-				<TokenDashboard chain={launch.chain} address={launch.address} symbol={launch.symbol} initial={state} description={launch.description} />
+				<TokenDashboard
+					chain={launch.chain}
+					address={launch.address}
+					symbol={launch.symbol}
+					initial={state}
+					description={launch.description}
+					creator={launch.creator}
+					attested={launch.attested}
+				/>
 			</WalletProviders>
 			<p className="muted" style={{ marginTop: 24, fontSize: 14 }}>
 				<Link href="/registry">back to the registry</Link>

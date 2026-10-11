@@ -21,11 +21,12 @@ export const launchInputSchema = z
 			.trim()
 			.transform((s) => s.replace(/^\$/, '').toUpperCase())
 			.pipe(z.string().regex(/^[A-Z0-9]{1,10}$/, 'Ticker must be 1 to 10 letters or digits.')),
+		// Optional: without a logo the launch gets a generated mark (see src/lib/logo.ts).
 		image: z
 			.string()
 			.trim()
-			.url('Logo must be a public https link to an image.')
-			.refine((s) => s.startsWith('https://'), 'Logo must be served over https.')
+			.default('')
+			.refine((s) => s === '' || /^https:\/\/\S+$/.test(s), 'Logo must be a public https link to an image.')
 			.refine((s) => s.length <= 512, 'Logo link must be 512 characters or fewer.'),
 		description: z
 			.string()
