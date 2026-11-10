@@ -1,0 +1,13 @@
+{
+  "name": "promptpad",
+  "owner": {"name": "nirholas"},
+  "description": "promptpad MCP connector for preparing token launches on Robinhood Chain and Solana.",
+  "plugins": [
+    {
+      "name": "promptpad",
+      "source": "./",
+      "description": "Prepare token launches on Robinhood Chain or Solana from a prompt through the promptpad MCP connector.",
+      "tags": ["mcp", "launchpad", "solana", "robinhood-chain"]
+    }
+  ]
+}
