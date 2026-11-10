@@ -1,0 +1,10 @@
+{
+  "name": "promptpad",
+  "version": "0.1.0",
+  "description": "Prepare token launches on Robinhood Chain or Solana from a prompt through the promptpad MCP connector. The user signs and pays at a checkout link.",
+  "author": {"name": "nirholas"},
+  "repository": "https://github.com/nirholas/promptpad",
+  "license": "MIT",
+  "homepage": "https://promptpad.fun",
+  "keywords": ["mcp", "launchpad", "bonding-curve", "solana", "robinhood-chain", "token"]
+}
